@@ -35,6 +35,16 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 - [ ] **O2 · B** **Metrics endpoint** — Prometheus-compatible `/metrics` (download counts, publish rate, active tokens)
 - [x] **O3 · S** **Structured audit log API** — `GET /api/v1/audit` (admin only) with filters
 
+## Terminal UI (`freight-registry-tui`)
+
+- [x] **T1 · B** **Package browser** — searchable list, per-version downloads, yank/unyank actions
+- [x] **T2 · B** **Publish form** — name/version/path form; reads `.tar.gz` and sends wire-format PUT
+- [x] **T3 · B** **User management** — admin promote/demote/remove via HTTP (`/api/v1/admin/users/:name/*`)
+- [x] **T4 · B** **Token management** — list/create/revoke via `/api/v1/me/tokens`
+- [x] **T5 · B** **Audit log viewer** — scrollable table with `user:` / action filter (admin only)
+- [ ] **T6 · S** **Login persistence** — save token to `~/.config/freight-registry/tui.toml` after login
+- [ ] **T7 · S** **Download metrics graph** — sparkline of download counts per version in detail pane
+
 ## Web UI
 
 - [ ] **U1 · B** **Package index page** — browsable HTML listing of packages and versions

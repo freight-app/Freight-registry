@@ -1,12 +1,15 @@
-//! GET /api/v1/admin/users  — list all users (admin only)
+//! GET    /api/v1/admin/users                — list all users (admin only)
+//! POST   /api/v1/admin/users/:name/promote  — grant admin role
+//! POST   /api/v1/admin/users/:name/demote   — revoke admin role
+//! DELETE /api/v1/admin/users/:name          — remove user and all their tokens
 
 use std::sync::Arc;
 
-use axum::{extract::State, Json};
+use axum::{extract::{Path, State}, Json};
 use serde_json::{json, Value};
 
 use crate::{auth::AdminToken, AppState};
-use super::ApiResult;
+use super::{ApiError, ApiResult};
 
 pub async fn list_users(
     _auth: AdminToken,
@@ -23,4 +26,40 @@ pub async fn list_users(
         }))
         .collect();
     Ok(Json(json!({ "users": list })))
+}
+
+pub async fn promote_user(
+    _auth: AdminToken,
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> ApiResult<Json<Value>> {
+    if state.db.set_admin(&username, true).await? {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("user `{username}` not found")))
+    }
+}
+
+pub async fn demote_user(
+    _auth: AdminToken,
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> ApiResult<Json<Value>> {
+    if state.db.set_admin(&username, false).await? {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("user `{username}` not found")))
+    }
+}
+
+pub async fn remove_user(
+    _auth: AdminToken,
+    State(state): State<Arc<AppState>>,
+    Path(username): Path<String>,
+) -> ApiResult<Json<Value>> {
+    if state.db.delete_user(&username).await? {
+        Ok(Json(json!({ "ok": true })))
+    } else {
+        Err(ApiError::not_found(format!("user `{username}` not found")))
+    }
 }

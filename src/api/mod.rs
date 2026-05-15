@@ -20,6 +20,7 @@ pub mod download;
 pub mod email;
 pub mod health;
 pub mod login;
+pub mod my_tokens;
 pub mod owners;
 pub mod packages;
 pub mod publish;
@@ -86,8 +87,14 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/me/totp/enroll",                   post(totp::enroll))
         .route("/api/v1/me/totp/confirm",                  post(totp::confirm))
         .route("/api/v1/me/totp",                          delete(totp::disable))
+        // Token management (current user)
+        .route("/api/v1/me/tokens",                        get(my_tokens::list).post(my_tokens::create))
+        .route("/api/v1/me/tokens/:name",                  delete(my_tokens::revoke))
         // Admin
         .route("/api/v1/admin/users",                      get(admin::list_users))
+        .route("/api/v1/admin/users/:name/promote",        post(admin::promote_user))
+        .route("/api/v1/admin/users/:name/demote",         post(admin::demote_user))
+        .route("/api/v1/admin/users/:name",                delete(admin::remove_user))
         .route("/api/v1/admin/packages/:name",             delete(delete::delete_package))
         .route("/api/v1/audit",                            get(audit::list_audit))
         // Auth

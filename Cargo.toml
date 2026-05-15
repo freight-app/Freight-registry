@@ -12,6 +12,14 @@ path = "src/lib.rs"
 name = "freight-registry"
 path = "src/main.rs"
 
+[[bin]]
+name = "freight-registry-tui"
+path = "src/tui/main.rs"
+required-features = ["tui"]
+
+[features]
+tui = ["dep:ratatui", "dep:crossterm", "dep:reqwest"]
+
 [dependencies]
 axum               = "0.7"
 tokio              = { version = "1", features = ["full"] }
@@ -30,6 +38,9 @@ rand               = "0.8"
 async-trait        = "0.1"
 argon2             = "0.5"
 governor           = { version = "0.6", features = ["dashmap"] }
+ratatui            = { version = "0.28", optional = true }
+crossterm          = { version = "0.28", optional = true }
+reqwest            = { version = "0.12", features = ["json"], optional = true }
 
 [dev-dependencies]
 tower          = { version = "0.4", features = ["util"] }

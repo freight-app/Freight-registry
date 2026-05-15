@@ -623,3 +623,96 @@ async fn publish_invalid_package_name_400() {
     let (status, _) = send(app, req).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+// ── Token management endpoints ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn my_tokens_list_ok() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    let app = api::router(state, 1024 * 1024);
+    let (status, body) = send(app, get_auth("/api/v1/me/tokens", &tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body["tokens"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn my_tokens_create_and_revoke() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    let app = api::router(state.clone(), 1024 * 1024);
+    let (status, body) = send(app, post_json_auth("/api/v1/me/tokens", &tok,
+        serde_json::json!({"name": "mytoken"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["token"].is_string());
+    let app2 = api::router(state.clone(), 1024 * 1024);
+    let (status, _) = send(app2, delete_auth("/api/v1/me/tokens/mytoken", &tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    let app3 = api::router(state, 1024 * 1024);
+    let (status, _) = send(app3, delete_auth("/api/v1/me/tokens/mytoken", &tok)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn my_tokens_duplicate_409() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    let app = api::router(state.clone(), 1024 * 1024);
+    send(app, post_json_auth("/api/v1/me/tokens", &tok,
+        serde_json::json!({"name": "dupe"}))).await;
+    let app2 = api::router(state, 1024 * 1024);
+    let (status, _) = send(app2, post_json_auth("/api/v1/me/tokens", &tok,
+        serde_json::json!({"name": "dupe"}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+// ── User admin endpoints ──────────────────────────────────────────────────────
+
+fn post_empty_auth(uri: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST").uri(uri)
+        .header("Authorization", format!("Bearer {token}"))
+        .extension(ci())
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn admin_promote_and_demote() {
+    let state = make_state().await;
+    let admin_tok = do_register(&state, "admin", "pw").await;
+    do_register(&state, "alice", "pw").await;
+    state.db.set_admin("admin", true).await.unwrap();
+    let app = api::router(state.clone(), 1024 * 1024);
+    let (status, _) = send(app,
+        post_empty_auth("/api/v1/admin/users/alice/promote", &admin_tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state.db.get_user_by_username("alice").await.unwrap().unwrap().is_admin, 1);
+    let app2 = api::router(state.clone(), 1024 * 1024);
+    let (status, _) = send(app2,
+        post_empty_auth("/api/v1/admin/users/alice/demote", &admin_tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(state.db.get_user_by_username("alice").await.unwrap().unwrap().is_admin, 0);
+}
+
+#[tokio::test]
+async fn admin_remove_user_via_http() {
+    let state = make_state().await;
+    let admin_tok = do_register(&state, "admin", "pw").await;
+    do_register(&state, "alice", "pw").await;
+    state.db.set_admin("admin", true).await.unwrap();
+    let app = api::router(state.clone(), 1024 * 1024);
+    let (status, _) = send(app, delete_auth("/api/v1/admin/users/alice", &admin_tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.db.get_user_by_username("alice").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn admin_remove_nonexistent_user_404() {
+    let state = make_state().await;
+    let admin_tok = do_register(&state, "admin", "pw").await;
+    state.db.set_admin("admin", true).await.unwrap();
+    let app = api::router(state, 1024 * 1024);
+    let (status, _) = send(app, delete_auth("/api/v1/admin/users/nobody", &admin_tok)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

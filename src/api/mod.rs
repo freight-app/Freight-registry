@@ -16,6 +16,7 @@ pub mod login;
 pub mod owners;
 pub mod packages;
 pub mod publish;
+pub mod register;
 pub mod search;
 pub mod yank;
 
@@ -56,8 +57,9 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/packages/:name/:version/yank", delete(yank::yank).put(yank::unyank))
         .route("/api/v1/packages/:name/owners", get(owners::list).put(owners::add).delete(owners::remove))
         .route("/api/v1/me", get(me))
-        // Login
-        .route("/api/v1/users/login", post(login::login))
+        // Auth
+        .route("/api/v1/users/login",    post(login::login))
+        .route("/api/v1/users/register", post(register::register))
         // Hard cap on request body size (applies to publish uploads)
         .layer(DefaultBodyLimit::max(max_upload_bytes))
         .with_state(state)

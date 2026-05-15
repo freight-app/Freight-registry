@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use argon2::{password_hash::{rand_core::OsRng, SaltString}, Argon2, PasswordHasher};
 use async_trait::async_trait;
 use axum::{
     extract::FromRequestParts,
@@ -12,6 +13,16 @@ use crate::{
     db::{TokenRow, UserRow},
     AppState,
 };
+
+/// Hash a plaintext password with Argon2id. Returns the PHC string.
+pub fn hash_password(password: &str) -> anyhow::Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?
+        .to_string();
+    Ok(hash)
+}
 
 /// Extractor that requires a valid, non-expired `Authorization: Bearer <token>`.
 pub struct AuthToken {

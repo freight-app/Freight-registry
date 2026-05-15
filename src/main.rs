@@ -15,7 +15,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
-use argon2::{password_hash::{rand_core::OsRng, SaltString}, Argon2, PasswordHasher};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -26,6 +25,7 @@ mod rate_limit;
 mod storage;
 mod validate;
 
+use auth::hash_password;
 use db::Db;
 use rate_limit::Limiters;
 use storage::Storage;
@@ -256,15 +256,6 @@ async fn main() -> Result<()> {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn hash_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?
-        .to_string();
-    Ok(hash)
-}
 
 fn prompt_password() -> Result<String> {
     use std::io::{self, Write};

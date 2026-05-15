@@ -5,7 +5,7 @@ Self-hosted registry server for the [freight](https://github.com/TiniTinyTermina
 ## Features
 
 - **Package publish / download / search / yank** — full cargo-compatible wire protocol
-- **User accounts** — Argon2id password hashing; create and manage users via the CLI
+- **User accounts** — Argon2id password hashing; create users via the CLI (`user add`) or via HTTP (`POST /api/v1/users/register` / `freight register`)
 - **API tokens** — SHA-256 stored in DB; optional expiry; last-used tracking
 - **Package ownership** — first publisher claims a package; multi-owner with transfer support
 - **Rate limiting** — per-IP via `governor` (120 req/min read, 10 req/min write)

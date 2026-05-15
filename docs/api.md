@@ -18,7 +18,7 @@ Write endpoints and `/api/v1/me` require a valid API token:
 Authorization: Bearer <token>
 ```
 
-Tokens are issued via `freight-registry token add` or `POST /api/v1/users/login`.
+Tokens are issued via `freight-registry token add`, `POST /api/v1/users/register`, or `POST /api/v1/users/login`.
 
 ---
 
@@ -211,7 +211,49 @@ Removes one or more owners. Caller must already be an owner.
 
 ---
 
-## Login
+## Registration and login
+
+### `POST /api/v1/users/register`
+
+Creates a new user account and returns an initial API token. Rate-limited (write limiter, 10 req/min/IP).
+
+**Request body**
+```json
+{
+  "username":   "alice",
+  "password":   "hunter2",
+  "email":      "alice@example.com",
+  "token_name": "laptop"
+}
+```
+
+`email` and `token_name` are optional. `token_name` defaults to `init`.
+
+**Response 201**
+```json
+{
+  "ok":          true,
+  "login":       "alice",
+  "id":          1,
+  "token":       "a3f7c2…",
+  "expires_days": 90
+}
+```
+
+The token is shown once and never retrievable again. It expires after 90 days by default.
+
+**400** — invalid username or password (see validation rules below).  
+**409** — username already taken.  
+**429** — rate limit exceeded.
+
+#### Username / password rules
+
+| Field | Constraints |
+|---|---|
+| `username` | 1–64 chars, `[a-zA-Z0-9_-]` |
+| `password` | min 8 chars |
+
+---
 
 ### `POST /api/v1/users/login`
 
@@ -249,6 +291,7 @@ The token is shown once and never retrievable again.
 | Code | Meaning |
 |---|---|
 | 200 | Success |
+| 201 | Created (register) |
 | 400 | Bad request — invalid input |
 | 401 | Missing or invalid token |
 | 403 | Token valid but insufficient permission |

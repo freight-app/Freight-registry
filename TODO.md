@@ -24,15 +24,15 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 ## Storage & Database
 
-- [x] **D1 · B** **S3-compatible backend** — abstract `Storage` trait so tarballs can live in S3/MinIO
+- [x] **D1 · B** **S3-compatible backend** — `Storage` enum dispatches between local `PathBuf` and `object_store` S3/MinIO; `--s3-bucket/endpoint/key-id/secret/region` CLI flags
 - [ ] **D2 · B** **PostgreSQL support** — compile-time feature flag; share schema via sqlx migrations folder
-- [x] **D3 · B** **Proper migrations** — replace startup `ALTER TABLE` migrations with versioned `.sql` files (sqlx-cli `migrate run`)
+- [x] **D3 · B** **Proper migrations** — versioned `.sql` files in `migrations/`; `sqlx::migrate!()` runs on startup; backward-compat via `CREATE TABLE IF NOT EXISTS`
 - [x] **D4 · S** **Tarball integrity check on publish** — verify the uploaded file is a valid gzip/tar archive
 
 ## Observability
 
 - [x] **O1 · S** **Health endpoint** — `GET /health` returning DB reachability and uptime
-- [x] **O2 · B** **Metrics endpoint** — Prometheus-compatible `/metrics` (download counts, publish rate, active tokens)
+- [x] **O2 · B** **Metrics endpoint** — Prometheus-compatible `/metrics` via `prometheus-client 0.22`; gauges for package/version/user/token counts; counters for publishes, downloads served, login outcomes
 - [x] **O3 · S** **Structured audit log API** — `GET /api/v1/audit` (admin only) with filters
 
 ## Terminal UI (`freight-registry-tui`)

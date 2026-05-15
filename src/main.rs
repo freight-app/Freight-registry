@@ -23,6 +23,7 @@ mod auth;
 mod db;
 mod rate_limit;
 mod storage;
+mod totp;
 mod validate;
 
 use auth::hash_password;
@@ -63,6 +64,9 @@ enum Command {
         /// Maximum upload size in megabytes (default 50)
         #[arg(long, env = "FREIGHT_MAX_UPLOAD_MB", default_value_t = 50)]
         max_upload_mb: usize,
+        /// Delete audit log entries older than this many days (omit to keep forever)
+        #[arg(long, env = "FREIGHT_AUDIT_LOG_TTL_DAYS")]
+        audit_log_ttl_days: Option<i64>,
     },
     /// Manage user accounts
     User {
@@ -139,13 +143,32 @@ async fn main() -> Result<()> {
     let db = Db::open(&cli.data.join("registry.db")).await?;
 
     match cli.command {
-        Command::Serve { bind, base_url, max_upload_mb } => {
+        Command::Serve { bind, base_url, max_upload_mb, audit_log_ttl_days } => {
             let state = Arc::new(AppState {
                 db,
                 storage:  Storage::new(cli.data.join("tarballs")),
                 base_url: base_url.trim_end_matches('/').to_string(),
                 limiters: Limiters::new(),
             });
+
+            // Spawn audit log pruning task if a TTL was configured.
+            if let Some(ttl_days) = audit_log_ttl_days {
+                let db_clone = state.db.clone();
+                tokio::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(tokio::time::Duration::from_secs(24 * 3_600));
+                    loop {
+                        interval.tick().await;
+                        match db_clone.prune_audit_log(ttl_days).await {
+                            Ok(n) => tracing::info!(
+                                "audit log pruned: {n} entries older than {ttl_days} day(s) removed"
+                            ),
+                            Err(e) => tracing::error!("audit log prune failed: {e:#}"),
+                        }
+                    }
+                });
+            }
+
             let max_bytes = max_upload_mb * 1024 * 1024;
             let app = api::router(state, max_bytes);
             let listener = tokio::net::TcpListener::bind(&bind).await?;
@@ -216,7 +239,7 @@ async fn main() -> Result<()> {
                     .get_user_by_username(&user)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("no user named '{user}'"))?;
-                let token = db.create_token(u.id, &name, expires).await?;
+                let token = db.create_token(u.id, &name, expires, "api").await?;
                 println!("Token '{name}' created for '{user}':\n\n  {token}\n");
                 println!("Store this value — it will not be shown again.");
                 if let Some(days) = expires {
@@ -238,8 +261,8 @@ async fn main() -> Result<()> {
                 if tokens.is_empty() {
                     println!("no tokens");
                 } else {
-                    println!("{:<6}  {:<24}  {:<20}  expires", "id", "user", "name");
-                    println!("{}", "-".repeat(65));
+                    println!("{:<6}  {:<24}  {:<20}  {:<8}  expires", "id", "user", "name", "kind");
+                    println!("{}", "-".repeat(75));
                     for t in tokens {
                         let exp = t
                             .expires_at
@@ -253,7 +276,10 @@ async fn main() -> Result<()> {
                                 format!("{days_left}d")
                             })
                             .unwrap_or_else(|| "never".into());
-                        println!("{:<6}  {:<24}  {:<20}  {exp}", t.id, t.username, t.name);
+                        println!(
+                            "{:<6}  {:<24}  {:<20}  {:<8}  {exp}",
+                            t.id, t.username, t.name, t.kind
+                        );
                     }
                 }
             }

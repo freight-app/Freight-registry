@@ -16,44 +16,49 @@ fn unix_now() -> i64 {
 
 #[derive(FromRow, Clone)]
 pub struct UserRow {
-    pub id: i64,
-    pub username: String,
-    pub email: Option<String>,
-    pub password_hash: String,
-    pub is_admin: i64,
+    pub id:             i64,
+    pub username:       String,
+    pub email:          Option<String>,
+    pub password_hash:  String,
+    pub is_admin:       i64,
+    pub email_verified: i64,
+    pub totp_secret:    Option<String>,
+    pub totp_enabled:   i64,
 }
 
 #[derive(FromRow, Clone)]
 pub struct TokenRow {
-    pub id: i64,
-    pub user_id: i64,
-    pub name: String,
+    pub id:         i64,
+    pub user_id:    i64,
+    pub name:       String,
+    pub kind:       String,
     pub expires_at: Option<i64>,
-    pub last_used: Option<i64>,
+    pub last_used:  Option<i64>,
 }
 
 #[derive(FromRow)]
 pub struct TokenWithUser {
-    pub id: i64,
-    pub user_id: i64,
-    pub name: String,
+    pub id:         i64,
+    pub user_id:    i64,
+    pub name:       String,
+    pub kind:       String,
     pub expires_at: Option<i64>,
-    pub last_used: Option<i64>,
-    pub username: String,
+    pub last_used:  Option<i64>,
+    pub username:   String,
 }
 
 #[derive(FromRow)]
 pub struct PackageRow {
-    pub id: i64,
-    pub name: String,
+    pub id:          i64,
+    pub name:        String,
     pub description: Option<String>,
 }
 
 #[derive(FromRow)]
 pub struct VersionRow {
-    pub version: String,
+    pub version:  String,
     pub checksum: String,
-    pub yanked: i64,
+    pub yanked:   i64,
 }
 
 // ── Database handle ───────────────────────────────────────────────────────────
@@ -143,6 +148,7 @@ impl Db {
                 id         INTEGER PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 name       TEXT    NOT NULL,
+                kind       TEXT    NOT NULL DEFAULT 'api',
                 token_hash TEXT    NOT NULL UNIQUE,
                 expires_at INTEGER,
                 last_used  INTEGER,
@@ -167,21 +173,56 @@ impl Db {
         .execute(&self.pool)
         .await?;
 
-        // Additive migration: is_admin column (added in v2).
-        let has_is_admin: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'is_admin'",
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS email_tokens (
+                id         INTEGER PRIMARY KEY,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                kind       TEXT    NOT NULL,
+                token_hash TEXT    NOT NULL UNIQUE,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                UNIQUE(user_id, kind)
+            )",
         )
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(0);
-        if has_is_admin == 0 {
-            sqlx::query(
-                "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
-            )
-            .execute(&self.pool)
-            .await?;
-        }
+        .execute(&self.pool)
+        .await?;
 
+        // Additive migrations — run in order, check before altering.
+        self.add_column_if_missing(
+            "users", "is_admin",
+            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+        ).await?;
+        self.add_column_if_missing(
+            "users", "email_verified",
+            "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
+        ).await?;
+        self.add_column_if_missing(
+            "users", "totp_secret",
+            "ALTER TABLE users ADD COLUMN totp_secret TEXT",
+        ).await?;
+        self.add_column_if_missing(
+            "users", "totp_enabled",
+            "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
+        ).await?;
+        self.add_column_if_missing(
+            "tokens", "kind",
+            "ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'api'",
+        ).await?;
+
+        Ok(())
+    }
+
+    async fn add_column_if_missing(&self, table: &str, column: &str, ddl: &str) -> Result<()> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
+        );
+        let n: i64 = sqlx::query_scalar(&sql)
+            .fetch_one(&self.pool)
+            .await
+            .unwrap_or(0);
+        if n == 0 {
+            sqlx::query(ddl).execute(&self.pool).await?;
+        }
         Ok(())
     }
 
@@ -206,8 +247,9 @@ impl Db {
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<UserRow>> {
         let row = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin FROM users
-             WHERE lower(username) = lower(?)",
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users WHERE lower(username) = lower(?)",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -215,9 +257,23 @@ impl Db {
         Ok(row)
     }
 
+    pub async fn get_user_by_id(&self, id: i64) -> Result<Option<UserRow>> {
+        let row = sqlx::query_as(
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn list_users(&self) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin FROM users ORDER BY username",
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -245,15 +301,108 @@ impl Db {
         Ok(n > 0)
     }
 
+    pub async fn set_email_verified(&self, user_id: i64) -> Result<()> {
+        sqlx::query("UPDATE users SET email_verified = 1 WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_password_hash(&self, user_id: i64, hash: &str) -> Result<()> {
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(hash)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_totp_secret(&self, user_id: i64, secret: Option<&str>) -> Result<()> {
+        sqlx::query("UPDATE users SET totp_secret = ? WHERE id = ?")
+            .bind(secret)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn enable_totp(&self, user_id: i64, enabled: bool) -> Result<()> {
+        sqlx::query("UPDATE users SET totp_enabled = ? WHERE id = ?")
+            .bind(enabled as i64)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // ── Email tokens ───────────────────────────────────────────────────────────
+
+    /// Create an email verification or password-reset token for `user_id`.
+    /// `kind` must be `"verify"` or `"reset"`. Returns the raw token (shown once).
+    pub async fn create_email_token(&self, user_id: i64, kind: &str) -> Result<String> {
+        use rand::RngCore;
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let token = hex::encode(bytes);
+        let hash = hex::encode(Sha256::digest(token.as_bytes()));
+        let expires_at = if kind == "reset" {
+            unix_now() + 3_600          // reset tokens valid 1 hour
+        } else {
+            unix_now() + 24 * 3_600    // verify tokens valid 24 hours
+        };
+        // Only one pending token per user per kind.
+        sqlx::query("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?")
+            .bind(user_id)
+            .bind(kind)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO email_tokens (user_id, kind, token_hash, expires_at)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(kind)
+        .bind(&hash)
+        .bind(expires_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(token)
+    }
+
+    /// Validate and consume an email token. Returns `Some(user_id)` on success, `None` if
+    /// the token is unknown, wrong kind, or expired.
+    pub async fn consume_email_token(&self, token: &str, kind: &str) -> Result<Option<i64>> {
+        let hash = hex::encode(Sha256::digest(token.as_bytes()));
+        let now = unix_now();
+        let row: Option<(i64, i64)> = sqlx::query_as(
+            "SELECT id, user_id FROM email_tokens
+             WHERE token_hash = ? AND kind = ? AND expires_at > ?",
+        )
+        .bind(&hash)
+        .bind(kind)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some((id, user_id)) = row else { return Ok(None) };
+        sqlx::query("DELETE FROM email_tokens WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(Some(user_id))
+    }
+
     // ── Tokens ─────────────────────────────────────────────────────────────────
 
-    /// Create a new token for `user_id`. `expires_days` = `None` means no expiry.
-    /// Returns the raw token string (shown to the user once).
+    /// Create a new token for `user_id`.
+    /// `kind`: `"api"` (CLI-issued), `"access"` (login session), `"refresh"` (refresh token).
     pub async fn create_token(
         &self,
         user_id: i64,
         name: &str,
         expires_days: Option<i64>,
+        kind: &str,
     ) -> Result<String> {
         use rand::RngCore;
         let mut bytes = [0u8; 32];
@@ -262,10 +411,12 @@ impl Db {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let expires_at = expires_days.map(|d| unix_now() + d * 86_400);
         sqlx::query(
-            "INSERT INTO tokens (user_id, name, token_hash, expires_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO tokens (user_id, name, kind, token_hash, expires_at)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(name)
+        .bind(kind)
         .bind(&hash)
         .bind(expires_at)
         .execute(&self.pool)
@@ -280,7 +431,7 @@ impl Db {
         let now = unix_now();
 
         let tok: Option<TokenRow> = sqlx::query_as(
-            "SELECT id, user_id, name, expires_at, last_used
+            "SELECT id, user_id, name, kind, expires_at, last_used
              FROM tokens WHERE token_hash = ?",
         )
         .bind(&hash)
@@ -305,7 +456,9 @@ impl Db {
         });
 
         let user: UserRow = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin FROM users WHERE id = ?",
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users WHERE id = ?",
         )
         .bind(tok.user_id)
         .fetch_one(&self.pool)
@@ -317,7 +470,7 @@ impl Db {
     pub async fn list_tokens(&self, user_id: Option<i64>) -> Result<Vec<TokenWithUser>> {
         if let Some(uid) = user_id {
             sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.expires_at, t.last_used, u.username
+                "SELECT t.id, t.user_id, t.name, t.kind, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  WHERE t.user_id = ? ORDER BY t.created_at",
             )
@@ -327,7 +480,7 @@ impl Db {
             .map_err(Into::into)
         } else {
             sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.expires_at, t.last_used, u.username
+                "SELECT t.id, t.user_id, t.name, t.kind, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  ORDER BY u.username, t.created_at",
             )
@@ -499,7 +652,8 @@ impl Db {
 
     pub async fn get_package_owners(&self, package_name: &str) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(
-            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin
+            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
+                    u.email_verified, u.totp_secret, u.totp_enabled
              FROM users u
              JOIN package_owners po ON po.user_id = u.id
              JOIN packages p        ON p.id = po.package_id
@@ -522,7 +676,9 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(false) };
 
         let user: Option<UserRow> = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin FROM users WHERE lower(username) = lower(?)",
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users WHERE lower(username) = lower(?)",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -582,5 +738,16 @@ impl Db {
             .execute(&pool)
             .await;
         });
+    }
+
+    /// Delete audit log entries older than `ttl_days`. Returns the number of rows deleted.
+    pub async fn prune_audit_log(&self, ttl_days: i64) -> Result<u64> {
+        let cutoff = unix_now() - ttl_days * 86_400;
+        let n = sqlx::query("DELETE FROM audit_log WHERE created_at < ?")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        Ok(n)
     }
 }

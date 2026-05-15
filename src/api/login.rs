@@ -1,10 +1,11 @@
 //! POST /api/v1/users/login
 //!
-//! Verifies username + password with Argon2, creates a new API token,
-//! and returns it.  Tokens created via login expire after 90 days by default.
+//! Verifies username + password (SHA-256 pre-hashed from client) with Argon2id,
+//! optionally checks a TOTP code, then returns an access token + a refresh token.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
@@ -19,14 +20,16 @@ use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
-    username: String,
-    password: String,
-    /// Optional name for the resulting token (defaults to `login-<unix>`).
+    username:    String,
+    password:    String,
     #[serde(default)]
-    token_name: Option<String>,
-    /// Token lifetime in days (default 90, max 365).
+    token_name:  Option<String>,
+    /// Access token lifetime in days (default 90, max 365).
     #[serde(default)]
     expires_days: Option<i64>,
+    /// Required when the account has TOTP enabled.
+    #[serde(default)]
+    totp_code:   Option<String>,
 }
 
 pub async fn login(
@@ -39,7 +42,7 @@ pub async fn login(
         return Err(ApiError::too_many_requests());
     }
 
-    // Per-username lockout — checked before DB to avoid the query on already-locked accounts.
+    // Per-username lockout — checked before DB to skip the query on locked accounts.
     if state.limiters.login.is_locked(&req.username) {
         tracing::warn!(user = %req.username, "login blocked — account locked out");
         return Err(ApiError::too_many_requests());
@@ -65,28 +68,52 @@ pub async fn login(
         return Err(ApiError::not_found("unknown username or wrong password"));
     }
 
+    // TOTP check — required when the account has 2FA enabled.
+    if user.totp_enabled != 0 {
+        let code = req
+            .totp_code
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("TOTP code required"))?;
+        let secret = user
+            .totp_secret
+            .as_deref()
+            .ok_or_else(|| ApiError::internal("TOTP secret missing"))?;
+        if !crate::totp::verify(secret, &user.username, code) {
+            return Err(ApiError::bad_request("invalid TOTP code"));
+        }
+    }
+
     state.limiters.login.record_success(&req.username);
 
-    let token_name = req.token_name.unwrap_or_else(|| {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        format!("login-{ts}")
-    });
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let token_name = req
+        .token_name
+        .unwrap_or_else(|| format!("login-{ts}"));
+    let refresh_name = format!("refresh-{ts}");
 
     let expires_days = req.expires_days.map(|d| d.clamp(1, 365)).or(Some(90));
-    let token = state.db.create_token(user.id, &token_name, expires_days).await?;
+
+    // Access token: client-configurable lifetime, kind="access".
+    let token = state
+        .db
+        .create_token(user.id, &token_name, expires_days, "access")
+        .await?;
+    // Refresh token: 30-day fixed lifetime, kind="refresh".
+    let refresh_token = state
+        .db
+        .create_token(user.id, &refresh_name, Some(30), "refresh")
+        .await?;
 
     let ip = addr.ip().to_string();
-    state
-        .db
-        .audit(Some(user.id), "login", None, None, Some(&ip));
+    state.db.audit(Some(user.id), "login", None, None, Some(&ip));
     tracing::info!(user = %user.username, "logged in from {ip}");
 
     Ok(Json(json!({
-        "token": token,
-        "expires_days": expires_days,
+        "token":         token,
+        "refresh_token": refresh_token,
+        "expires_days":  expires_days,
     })))
 }

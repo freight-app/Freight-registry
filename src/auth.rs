@@ -24,7 +24,8 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
     Ok(hash)
 }
 
-/// Extractor that requires a valid, non-expired `Authorization: Bearer <token>`.
+/// Extractor for a valid, non-expired `Authorization: Bearer <token>`.
+/// Rejects tokens with `kind = "refresh"` — those may only be used at `/auth/refresh`.
 pub struct AuthToken {
     pub user:  UserRow,
     #[allow(dead_code)]
@@ -48,6 +49,13 @@ impl FromRequestParts<Arc<AppState>> for AuthToken {
             .await
             .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?
             .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "invalid or expired API token"))?;
+
+        if token.kind == "refresh" {
+            return Err(err(
+                StatusCode::UNAUTHORIZED,
+                "refresh tokens cannot be used for API auth — use POST /api/v1/auth/refresh",
+            ));
+        }
 
         Ok(AuthToken { user, token })
     }
@@ -74,6 +82,40 @@ impl FromRequestParts<Arc<AppState>> for AdminToken {
             return Err(err(StatusCode::FORBIDDEN, "admin access required"));
         }
         Ok(AdminToken { user: auth.user, token: auth.token })
+    }
+}
+
+/// Extractor for refresh-token auth. Accepts only tokens with `kind = "refresh"`.
+/// Used exclusively by `POST /api/v1/auth/refresh`.
+pub struct RefreshTokenAuth {
+    pub user:  UserRow,
+    #[allow(dead_code)]
+    pub token: TokenRow,
+}
+
+#[async_trait]
+impl FromRequestParts<Arc<AppState>> for RefreshTokenAuth {
+    type Rejection = (StatusCode, Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let raw = bearer_token(parts)
+            .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "missing bearer token"))?;
+
+        let (token, user) = state
+            .db
+            .validate_token(&raw)
+            .await
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?
+            .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "invalid or expired token"))?;
+
+        if token.kind != "refresh" {
+            return Err(err(StatusCode::UNAUTHORIZED, "expected a refresh token"));
+        }
+
+        Ok(RefreshTokenAuth { user, token })
     }
 }
 

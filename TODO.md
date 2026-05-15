@@ -4,8 +4,8 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 ## Core / Protocol
 
-- [ ] **C1 · B** **Token scopes** — read-only vs. publish vs. admin scopes; enforce per-endpoint
-- [ ] **C2 · B** **Scoped packages** — `@org/name` namespace support (affects validation, ownership, routes)
+- [x] **C1 · B** **Token scopes** — `"read"` / `"publish"` (default) / `"admin"` scopes on tokens; `PublishToken` extractor enforces scope on all write endpoints; `AdminToken` requires `is_admin=1` + scope ≥ publish; `POST /api/v1/me/tokens` accepts `scope` field
+- [x] **C2 · B** **Scoped packages** — `@scope/name` format accepted in validation and publish; base-name uniqueness enforced across scopes (`@acme/mylib` blocks `@other/mylib`); scoped names use `%2F` encoding in URL paths
 - [x] **C3 · S** **Bulk search pagination** — cursor- or page-based results for `/api/v1/search`
 - [x] **C4 · S** **Package deletion** — hard-delete (tarball + DB row) for admins only; separate from yank
 - [x] **C5 · S** **Checksum verification on download** — re-check SHA-256 against stored value before streaming

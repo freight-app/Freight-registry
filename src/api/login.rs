@@ -98,15 +98,15 @@ pub async fn login(
 
     let expires_days = req.expires_days.map(|d| d.clamp(1, 365)).or(Some(90));
 
-    // Access token: client-configurable lifetime, kind="access".
+    // Access token: client-configurable lifetime, kind="access", scope="publish".
     let token = state
         .db
-        .create_token(user.id, &token_name, expires_days, "access")
+        .create_token(user.id, &token_name, expires_days, "access", "publish")
         .await?;
-    // Refresh token: 30-day fixed lifetime, kind="refresh".
+    // Refresh token: 30-day fixed lifetime. Scope is inherited by the new access token on refresh.
     let refresh_token = state
         .db
-        .create_token(user.id, &refresh_name, Some(30), "refresh")
+        .create_token(user.id, &refresh_name, Some(30), "refresh", "publish")
         .await?;
 
     let ip = addr.ip().to_string();

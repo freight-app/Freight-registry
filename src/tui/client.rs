@@ -48,6 +48,7 @@ pub struct TokenInfo {
     pub id:         i64,
     pub name:       String,
     pub kind:       String,
+    pub scope:      String,
     pub expires_at: Option<i64>,
     pub last_used:  Option<i64>,
 }
@@ -97,6 +98,12 @@ impl Client {
 
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
+    }
+
+    /// Encode a package name for use in a URL path segment.
+    /// Scoped names like `@acme/mylib` need the `/` encoded as `%2F`.
+    fn encode_pkg(name: &str) -> String {
+        name.replace('/', "%2F")
     }
 
     fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -157,8 +164,9 @@ impl Client {
     }
 
     pub async fn get_package(&self, name: &str) -> Result<PackageDetail> {
-        let url_pkg    = self.url(&format!("/api/v1/packages/{name}"));
-        let url_owners = self.url(&format!("/api/v1/packages/{name}/owners"));
+        let enc        = Self::encode_pkg(name);
+        let url_pkg    = self.url(&format!("/api/v1/packages/{enc}"));
+        let url_owners = self.url(&format!("/api/v1/packages/{enc}/owners"));
 
         let (pkg_resp, own_resp) = tokio::join!(
             self.inner.get(&url_pkg).send(),
@@ -189,9 +197,10 @@ impl Client {
     }
 
     pub async fn yank(&self, name: &str, version: &str) -> Result<()> {
+        let enc = Self::encode_pkg(name);
         let resp = self
             .auth(self.inner.delete(
-                self.url(&format!("/api/v1/packages/{name}/{version}/yank")),
+                self.url(&format!("/api/v1/packages/{enc}/{version}/yank")),
             ))
             .send()
             .await?;
@@ -200,9 +209,10 @@ impl Client {
     }
 
     pub async fn unyank(&self, name: &str, version: &str) -> Result<()> {
+        let enc = Self::encode_pkg(name);
         let resp = self
             .auth(self.inner.put(
-                self.url(&format!("/api/v1/packages/{name}/{version}/yank")),
+                self.url(&format!("/api/v1/packages/{enc}/{version}/yank")),
             ))
             .send()
             .await?;
@@ -211,9 +221,10 @@ impl Client {
     }
 
     pub async fn delete_package(&self, name: &str) -> Result<()> {
+        let enc = Self::encode_pkg(name);
         let resp = self
             .auth(self.inner.delete(
-                self.url(&format!("/api/v1/admin/packages/{name}")),
+                self.url(&format!("/api/v1/admin/packages/{enc}")),
             ))
             .send()
             .await?;
@@ -252,10 +263,10 @@ impl Client {
         Ok(serde_json::from_value(body["tokens"].clone()).unwrap_or_default())
     }
 
-    pub async fn create_token(&self, name: &str, expires_days: Option<i64>) -> Result<String> {
+    pub async fn create_token(&self, name: &str, expires_days: Option<i64>, scope: &str) -> Result<String> {
         let resp = self
             .auth(self.inner.post(self.url("/api/v1/me/tokens")))
-            .json(&json!({ "name": name, "expires_days": expires_days }))
+            .json(&json!({ "name": name, "expires_days": expires_days, "scope": scope }))
             .send()
             .await?;
         let body = Self::check(resp).await?;

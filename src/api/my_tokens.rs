@@ -8,7 +8,7 @@ use axum::{extract::{Path, State}, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{auth::AuthToken, AppState};
+use crate::{auth::{AuthToken, PublishToken}, validate, AppState};
 use super::{ApiError, ApiResult};
 
 pub async fn list(
@@ -22,6 +22,7 @@ pub async fn list(
             "id":         t.id,
             "name":       t.name,
             "kind":       t.kind,
+            "scope":      t.scope,
             "expires_at": t.expires_at,
             "last_used":  t.last_used,
         }))
@@ -29,28 +30,34 @@ pub async fn list(
     Ok(Json(json!({ "tokens": list })))
 }
 
+fn default_scope() -> String { "publish".to_string() }
+
 #[derive(Deserialize)]
 pub struct CreateTokenReq {
     name: String,
     #[serde(default)]
     expires_days: Option<i64>,
+    /// Token scope: `"read"`, `"publish"` (default), or `"admin"`.
+    #[serde(default = "default_scope")]
+    scope: String,
 }
 
 pub async fn create(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateTokenReq>,
 ) -> ApiResult<Json<Value>> {
+    validate::token_scope(&req.scope)?;
     let token = state
         .db
-        .create_token(auth.user.id, &req.name, req.expires_days, "api")
+        .create_token(auth.user.id, &req.name, req.expires_days, "api", &req.scope)
         .await
         .map_err(|_| ApiError::conflict(format!("token `{}` already exists", req.name)))?;
-    Ok(Json(json!({ "token": token, "name": req.name })))
+    Ok(Json(json!({ "token": token, "name": req.name, "scope": req.scope })))
 }
 
 pub async fn revoke(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<Value>> {

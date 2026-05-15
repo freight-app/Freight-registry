@@ -61,7 +61,40 @@ impl FromRequestParts<Arc<AppState>> for AuthToken {
     }
 }
 
-/// Extractor that additionally requires `is_admin = 1` on the authenticated user.
+/// Returns true when `scope` is sufficient for a write/publish action.
+/// Accepted scopes: `"publish"`, `"admin"`.
+pub fn scope_allows_publish(scope: &str) -> bool {
+    matches!(scope, "publish" | "admin")
+}
+
+/// Extractor for endpoints that require a token with at least `publish` scope.
+/// Read-only tokens (`scope = "read"`) are rejected with 403.
+pub struct PublishToken {
+    pub user:  UserRow,
+    pub token: TokenRow,
+}
+
+#[async_trait]
+impl FromRequestParts<Arc<AppState>> for PublishToken {
+    type Rejection = (StatusCode, Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthToken::from_request_parts(parts, state).await?;
+        if !scope_allows_publish(&auth.token.scope) {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "this token has read-only scope — use a publish or admin scoped token",
+            ));
+        }
+        Ok(PublishToken { user: auth.user, token: auth.token })
+    }
+}
+
+/// Extractor that additionally requires `is_admin = 1` on the authenticated user
+/// and a token scope of at least `"publish"`.
 pub struct AdminToken {
     #[allow(dead_code)]
     pub user:  UserRow,
@@ -80,6 +113,12 @@ impl FromRequestParts<Arc<AppState>> for AdminToken {
         let auth = AuthToken::from_request_parts(parts, state).await?;
         if auth.user.is_admin == 0 {
             return Err(err(StatusCode::FORBIDDEN, "admin access required"));
+        }
+        if !scope_allows_publish(&auth.token.scope) {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "this token has read-only scope — admin endpoints require publish or admin scope",
+            ));
         }
         Ok(AdminToken { user: auth.user, token: auth.token })
     }

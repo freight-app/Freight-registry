@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{auth::AuthToken, AppState};
+use crate::{auth::PublishToken, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -35,7 +35,7 @@ pub async fn list(
 
 pub async fn add(
     State(state): State<Arc<AppState>>,
-    auth: AuthToken,
+    auth: PublishToken,
     Path(name): Path<String>,
     Json(body): Json<OwnersBody>,
 ) -> ApiResult<Json<Value>> {
@@ -63,7 +63,7 @@ pub async fn add(
 
 pub async fn remove(
     State(state): State<Arc<AppState>>,
-    auth: AuthToken,
+    auth: PublishToken,
     Path(name): Path<String>,
     Json(body): Json<OwnersBody>,
 ) -> ApiResult<Json<Value>> {

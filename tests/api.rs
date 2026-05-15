@@ -742,3 +742,145 @@ async fn metrics_returns_prometheus_text() {
     assert!(body.contains("freight_users"),     "missing freight_users in: {body}");
     assert!(body.contains("freight_publishes"), "missing freight_publishes in: {body}");
 }
+
+// ── Token scopes (C1) ─────────────────────────────────────────────────────────
+
+fn put_json_auth_body(uri: &str, token: &str, body: Vec<u8>) -> Request<Body> {
+    Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/octet-stream")
+        .extension(ci())
+        .body(Body::from(body))
+        .unwrap()
+}
+
+async fn create_scoped_token(state: &Arc<AppState>, user_token: &str, scope: &str) -> String {
+    use tower::ServiceExt;
+    let app = api::router(state.clone(), 1024 * 1024);
+    let (status, body) = send(app, post_json_auth("/api/v1/me/tokens", user_token,
+        serde_json::json!({ "name": format!("tok-{scope}"), "scope": scope }))).await;
+    assert_eq!(status, StatusCode::OK, "create {scope} token failed: {body}");
+    body["token"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn read_scope_token_cannot_publish() {
+    let state = make_state().await;
+    let publish_tok = do_register(&state, "alice", "pw").await;
+    let read_tok = create_scoped_token(&state, &publish_tok, "read").await;
+
+    let body = build_publish_body("mylib", "1.0.0");
+    let app = api::router(state, 1024 * 1024);
+    let (status, _) = send(app, put_json_auth_body("/api/v1/packages", &read_tok, body)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn read_scope_token_can_list_tokens() {
+    let state = make_state().await;
+    let publish_tok = do_register(&state, "alice", "pw").await;
+    let read_tok = create_scoped_token(&state, &publish_tok, "read").await;
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, body) = send(app, get_auth("/api/v1/me/tokens", &read_tok)).await;
+    assert_eq!(status, StatusCode::OK, "read token should list tokens: {body}");
+}
+
+#[tokio::test]
+async fn read_scope_token_cannot_create_token() {
+    let state = make_state().await;
+    let publish_tok = do_register(&state, "alice", "pw").await;
+    let read_tok = create_scoped_token(&state, &publish_tok, "read").await;
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, _) = send(app, post_json_auth("/api/v1/me/tokens", &read_tok,
+        serde_json::json!({ "name": "new-tok" }))).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn token_scope_returned_in_list() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    let _read_tok = create_scoped_token(&state, &tok, "read").await;
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, body) = send(app, get_auth("/api/v1/me/tokens", &tok)).await;
+    assert_eq!(status, StatusCode::OK);
+    let tokens = body["tokens"].as_array().unwrap();
+    assert!(tokens.iter().any(|t| t["scope"].as_str() == Some("read")));
+}
+
+#[tokio::test]
+async fn invalid_token_scope_rejected() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    let app = api::router(state, 1024 * 1024);
+    let (status, _) = send(app, post_json_auth("/api/v1/me/tokens", &tok,
+        serde_json::json!({ "name": "bad", "scope": "superadmin" }))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn read_scope_token_blocked_from_admin_endpoint() {
+    let state = make_state().await;
+    let tok = do_register(&state, "admin", "pw").await;
+    state.db.set_admin("admin", true).await.unwrap();
+    let read_tok = create_scoped_token(&state, &tok, "read").await;
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, _) = send(app, get_auth("/api/v1/admin/users", &read_tok)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+// ── Scoped packages (C2) ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn scoped_package_publish_and_get() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+
+    let status = do_publish(&state, &tok, "@acme/mylib", "1.0.0").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, body) = send(app, get("/api/v1/packages/@acme%2Fmylib")).await;
+    assert_eq!(status, StatusCode::OK, "should find scoped package: {body}");
+    assert_eq!(body["name"].as_str(), Some("@acme/mylib"));
+}
+
+#[tokio::test]
+async fn scoped_package_name_conflicts_across_scopes() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+
+    do_publish(&state, &tok, "@acme/mylib", "1.0.0").await;
+
+    // Same base name in a different scope must be rejected.
+    let status = do_publish(&state, &tok, "@other/mylib", "1.0.0").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn unscoped_conflicts_with_scoped_base_name() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+
+    do_publish(&state, &tok, "@acme/mylib", "1.0.0").await;
+
+    // Unscoped "mylib" must also be rejected.
+    let status = do_publish(&state, &tok, "mylib", "1.0.0").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn different_base_names_do_not_conflict() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+
+    do_publish(&state, &tok, "@acme/mylib", "1.0.0").await;
+    let status = do_publish(&state, &tok, "@acme/otherlib", "1.0.0").await;
+    assert_eq!(status, StatusCode::OK);
+}

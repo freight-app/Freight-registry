@@ -701,7 +701,7 @@ impl App {
                 let tx2    = tx.clone();
                 let tx3    = tx.clone();
                 tokio::spawn(async move {
-                    match client.create_token(&name, None).await {
+                    match client.create_token(&name, None, "publish").await {
                         Ok(raw) => { tx2.send(DataEvent::NewToken(raw)).await.ok(); }
                         Err(e)  => { tx2.send(DataEvent::Err(e.to_string())).await.ok(); }
                     }

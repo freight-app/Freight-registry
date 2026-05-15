@@ -32,6 +32,7 @@ pub struct TokenRow {
     pub user_id:    i64,
     pub name:       String,
     pub kind:       String,
+    pub scope:      String,
     pub expires_at: Option<i64>,
     pub last_used:  Option<i64>,
 }
@@ -42,6 +43,7 @@ pub struct TokenWithUser {
     pub user_id:    i64,
     pub name:       String,
     pub kind:       String,
+    pub scope:      String,
     pub expires_at: Option<i64>,
     pub last_used:  Option<i64>,
     pub username:   String,
@@ -289,12 +291,14 @@ impl Db {
 
     /// Create a new token for `user_id`.
     /// `kind`: `"api"` (CLI-issued), `"access"` (login session), `"refresh"` (refresh token).
+    /// `scope`: `"read"`, `"publish"`, or `"admin"`.
     pub async fn create_token(
         &self,
         user_id: i64,
         name: &str,
         expires_days: Option<i64>,
         kind: &str,
+        scope: &str,
     ) -> Result<String> {
         use rand::RngCore;
         let mut bytes = [0u8; 32];
@@ -303,12 +307,13 @@ impl Db {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let expires_at = expires_days.map(|d| unix_now() + d * 86_400);
         sqlx::query(
-            "INSERT INTO tokens (user_id, name, kind, token_hash, expires_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO tokens (user_id, name, kind, scope, token_hash, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(user_id)
         .bind(name)
         .bind(kind)
+        .bind(scope)
         .bind(&hash)
         .bind(expires_at)
         .execute(&self.pool)
@@ -323,7 +328,7 @@ impl Db {
         let now = unix_now();
 
         let tok: Option<TokenRow> = sqlx::query_as(
-            "SELECT id, user_id, name, kind, expires_at, last_used
+            "SELECT id, user_id, name, kind, scope, expires_at, last_used
              FROM tokens WHERE token_hash = ?",
         )
         .bind(&hash)
@@ -362,7 +367,7 @@ impl Db {
     pub async fn list_tokens(&self, user_id: Option<i64>) -> Result<Vec<TokenWithUser>> {
         if let Some(uid) = user_id {
             sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.kind, t.expires_at, t.last_used, u.username
+                "SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  WHERE t.user_id = ? ORDER BY t.created_at",
             )
@@ -372,7 +377,7 @@ impl Db {
             .map_err(Into::into)
         } else {
             sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.kind, t.expires_at, t.last_used, u.username
+                "SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  ORDER BY u.username, t.created_at",
             )
@@ -734,6 +739,37 @@ impl Db {
             .await?
             .rows_affected();
         Ok(n)
+    }
+
+    // ── Scoped package name conflict detection ────────────────────────────────
+
+    /// Returns the name of an existing package that would conflict with publishing `base_name`.
+    ///
+    /// A conflict exists when any package is already registered under `base_name` (unscoped)
+    /// or under any scope prefix (`@scope/base_name`). This enforces globally unique base names
+    /// so `@acme/mylib` and `@other/mylib` cannot coexist.
+    ///
+    /// Returns `None` when the base name is free.
+    pub async fn base_name_conflict(&self, base_name: &str) -> Result<Option<String>> {
+        // Exact unscoped match.
+        let exact: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM packages WHERE lower(name) = lower(?)",
+        )
+        .bind(base_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(n) = exact {
+            return Ok(Some(n));
+        }
+        // Any scoped variant: lower(name) ends with '/' || lower(base_name).
+        let pattern = format!("%/{}", base_name.to_lowercase());
+        let scoped: Option<String> = sqlx::query_scalar(
+            "SELECT name FROM packages WHERE lower(name) LIKE ?",
+        )
+        .bind(&pattern)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(scoped)
     }
 
     // ── Metrics ────────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{auth::AuthToken, AppState};
+use crate::{auth::PublishToken, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -19,7 +19,7 @@ pub struct CodeBody {
 }
 
 pub async fn enroll(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Value>> {
     let secret = crate::totp::generate_secret_b32();
@@ -35,7 +35,7 @@ pub async fn enroll(
 }
 
 pub async fn confirm(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
     Json(req): Json<CodeBody>,
 ) -> ApiResult<Json<Value>> {
@@ -63,7 +63,7 @@ pub async fn confirm(
 }
 
 pub async fn disable(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
     Json(req): Json<CodeBody>,
 ) -> ApiResult<Json<Value>> {

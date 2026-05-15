@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 
-use crate::{auth::AuthToken, validate, AppState};
+use crate::{auth::PublishToken, validate, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -30,7 +30,7 @@ struct PublishMeta {
 
 pub async fn publish(
     State(state): State<Arc<AppState>>,
-    auth: AuthToken,
+    auth: PublishToken,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
@@ -45,6 +45,18 @@ pub async fn publish(
     // Validate name and version
     validate::package_name(&meta.name)?;
     validate::version(&meta.vers)?;
+
+    // Cross-scope uniqueness: @acme/mylib and @other/mylib cannot coexist
+    // because both share the base name "mylib". Check before the ownership gate.
+    let base = validate::base_name(&meta.name);
+    if let Some(conflict) = state.db.base_name_conflict(base).await? {
+        if !conflict.eq_ignore_ascii_case(&meta.name) {
+            return Err(ApiError::conflict(format!(
+                "package name `{}` conflicts with existing package `{}`",
+                meta.name, conflict,
+            )));
+        }
+    }
 
     // Ownership check: new package → anyone with a valid token can claim it;
     // existing package → must be a registered owner.

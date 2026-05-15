@@ -7,12 +7,12 @@ use axum::{
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 
-use crate::{auth::AuthToken, AppState};
+use crate::{auth::PublishToken, AppState};
 use super::{ApiError, ApiResult};
 
 pub async fn yank(
     State(state): State<Arc<AppState>>,
-    auth: AuthToken,
+    auth: PublishToken,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path((name, version)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
@@ -29,7 +29,7 @@ pub async fn yank(
 
 pub async fn unyank(
     State(state): State<Arc<AppState>>,
-    auth: AuthToken,
+    auth: PublishToken,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path((name, version)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {

@@ -23,7 +23,7 @@ pub async fn refresh(
     let name = format!("access-{ts}");
     let token = state
         .db
-        .create_token(auth.user.id, &name, Some(90), "access")
+        .create_token(auth.user.id, &name, Some(90), "access", "publish")
         .await?;
 
     Ok(Json(json!({

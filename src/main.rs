@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
                     .get_user_by_username(&user)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("no user named '{user}'"))?;
-                let token = db.create_token(u.id, &name, expires, "api").await?;
+                let token = db.create_token(u.id, &name, expires, "api", "publish").await?;
                 println!("Token '{name}' created for '{user}':\n\n  {token}\n");
                 println!("Store this value — it will not be shown again.");
                 if let Some(days) = expires {

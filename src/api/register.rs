@@ -38,8 +38,8 @@ pub async fn register(
 
     validate::username(&req.username)
         .map_err(|e| ApiError::bad_request(e))?;
-    validate::password(&req.password)
-        .map_err(|e| ApiError::bad_request(e))?;
+    // Password arrives as SHA-256(plaintext) from the client; length/complexity
+    // is validated client-side before hashing.  We just wrap it with Argon2id.
 
     let hash = hash_password(&req.password)
         .map_err(|_| ApiError::internal("password hashing failed"))?;

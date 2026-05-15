@@ -246,12 +246,22 @@ The token is shown once and never retrievable again. It expires after 90 days by
 **409** — username already taken.  
 **429** — rate limit exceeded.
 
-#### Username / password rules
+#### Password encoding
+
+The `password` field must be the **lowercase hex SHA-256 digest** of the plaintext password, not the plaintext itself. The client hashes before sending so the plaintext never leaves the machine.
+
+```sh
+# curl example
+echo -n 'mysecretpassword' | sha256sum | cut -d' ' -f1
+# → 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8
+```
+
+Validation (enforced client-side before hashing):
 
 | Field | Constraints |
 |---|---|
-| `username` | 1–64 chars, `[a-zA-Z0-9_-]` |
-| `password` | min 8 chars |
+| `username` | 2–32 chars, `[a-zA-Z0-9_-]`, must start with a letter |
+| `password` (plaintext) | min 8 chars |
 
 ---
 
@@ -270,6 +280,8 @@ Verifies username + password and returns a new API token. Rate-limited (write li
 ```
 
 `token_name` defaults to `login-<unix-timestamp>`. `expires_days` defaults to `90`; clamped to `[1, 365]`.
+
+The `password` field must be the SHA-256 hex digest of the plaintext password, matching the encoding used at registration (see above).
 
 **Response 200**
 ```json

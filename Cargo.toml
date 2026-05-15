@@ -25,7 +25,7 @@ axum               = "0.7"
 tokio              = { version = "1", features = ["full"] }
 tower-http         = { version = "0.5", features = ["trace", "cors"] }
 totp-rs            = { version = "5", features = ["gen_secret", "otpauth"] }
-sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
+sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
 sha2               = "0.10"

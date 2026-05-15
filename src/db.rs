@@ -102,7 +102,7 @@ impl Db {
             .execute(&pool)
             .await?;
         let db = Self { pool };
-        db.migrate().await?;
+        sqlx::migrate!().run(&db.pool).await?;
         Ok(db)
     }
 
@@ -114,157 +114,8 @@ impl Db {
             .pragma("journal_mode", "WAL");
         let pool = SqlitePool::connect_with(opts).await?;
         let db = Self { pool };
-        db.migrate().await?;
+        sqlx::migrate!().run(&db.pool).await?;
         Ok(db)
-    }
-
-    async fn migrate(&self) -> Result<()> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS users (
-                id            INTEGER PRIMARY KEY,
-                username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                email         TEXT UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at    INTEGER NOT NULL DEFAULT (unixepoch())
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS packages (
-                id          INTEGER PRIMARY KEY,
-                name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
-                description TEXT,
-                created_at  INTEGER NOT NULL DEFAULT (unixepoch())
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS versions (
-                id         INTEGER PRIMARY KEY,
-                package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-                version    TEXT    NOT NULL,
-                checksum   TEXT    NOT NULL,
-                yanked     INTEGER NOT NULL DEFAULT 0,
-                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-                UNIQUE(package_id, version)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS package_owners (
-                package_id INTEGER NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-                user_id    INTEGER NOT NULL REFERENCES users(id)    ON DELETE CASCADE,
-                PRIMARY KEY (package_id, user_id)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // If tokens table predates user_id, recreate it (dev-only migration).
-        let has_user_id: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('tokens') WHERE name = 'user_id'",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .unwrap_or(0);
-
-        if has_user_id == 0 {
-            sqlx::query("DROP TABLE IF EXISTS tokens")
-                .execute(&self.pool)
-                .await?;
-        }
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS tokens (
-                id         INTEGER PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                name       TEXT    NOT NULL,
-                kind       TEXT    NOT NULL DEFAULT 'api',
-                token_hash TEXT    NOT NULL UNIQUE,
-                expires_at INTEGER,
-                last_used  INTEGER,
-                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-                UNIQUE(user_id, name)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS audit_log (
-                id         INTEGER PRIMARY KEY,
-                user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                action     TEXT    NOT NULL,
-                package    TEXT,
-                version    TEXT,
-                ip_addr    TEXT,
-                created_at INTEGER NOT NULL DEFAULT (unixepoch())
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS email_tokens (
-                id         INTEGER PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                kind       TEXT    NOT NULL,
-                token_hash TEXT    NOT NULL UNIQUE,
-                expires_at INTEGER NOT NULL,
-                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-                UNIQUE(user_id, kind)
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Additive migrations — run in order, check before altering.
-        self.add_column_if_missing(
-            "users", "is_admin",
-            "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
-        ).await?;
-        self.add_column_if_missing(
-            "users", "email_verified",
-            "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
-        ).await?;
-        self.add_column_if_missing(
-            "users", "totp_secret",
-            "ALTER TABLE users ADD COLUMN totp_secret TEXT",
-        ).await?;
-        self.add_column_if_missing(
-            "users", "totp_enabled",
-            "ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0",
-        ).await?;
-        self.add_column_if_missing(
-            "tokens", "kind",
-            "ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'api'",
-        ).await?;
-        self.add_column_if_missing(
-            "versions", "downloads",
-            "ALTER TABLE versions ADD COLUMN downloads INTEGER NOT NULL DEFAULT 0",
-        ).await?;
-
-        Ok(())
-    }
-
-    async fn add_column_if_missing(&self, table: &str, column: &str, ddl: &str) -> Result<()> {
-        let sql = format!(
-            "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
-        );
-        let n: i64 = sqlx::query_scalar(&sql)
-            .fetch_one(&self.pool)
-            .await
-            .unwrap_or(0);
-        if n == 0 {
-            sqlx::query(ddl).execute(&self.pool).await?;
-        }
-        Ok(())
     }
 
     // ── Users ──────────────────────────────────────────────────────────────────

@@ -46,18 +46,6 @@ pub async fn publish(
     validate::package_name(&meta.name)?;
     validate::version(&meta.vers)?;
 
-    // Cross-scope uniqueness: @acme/mylib and @other/mylib cannot coexist
-    // because both share the base name "mylib". Check before the ownership gate.
-    let base = validate::base_name(&meta.name);
-    if let Some(conflict) = state.db.base_name_conflict(base).await? {
-        if !conflict.eq_ignore_ascii_case(&meta.name) {
-            return Err(ApiError::conflict(format!(
-                "package name `{}` conflicts with existing package `{}`",
-                meta.name, conflict,
-            )));
-        }
-    }
-
     // Ownership check: new package → anyone with a valid token can claim it;
     // existing package → must be a registered owner.
     match state.db.user_owns_package(auth.user.id, &meta.name).await? {

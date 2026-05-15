@@ -741,37 +741,6 @@ impl Db {
         Ok(n)
     }
 
-    // ── Scoped package name conflict detection ────────────────────────────────
-
-    /// Returns the name of an existing package that would conflict with publishing `base_name`.
-    ///
-    /// A conflict exists when any package is already registered under `base_name` (unscoped)
-    /// or under any scope prefix (`@scope/base_name`). This enforces globally unique base names
-    /// so `@acme/mylib` and `@other/mylib` cannot coexist.
-    ///
-    /// Returns `None` when the base name is free.
-    pub async fn base_name_conflict(&self, base_name: &str) -> Result<Option<String>> {
-        // Exact unscoped match.
-        let exact: Option<String> = sqlx::query_scalar(
-            "SELECT name FROM packages WHERE lower(name) = lower(?)",
-        )
-        .bind(base_name)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(n) = exact {
-            return Ok(Some(n));
-        }
-        // Any scoped variant: lower(name) ends with '/' || lower(base_name).
-        let pattern = format!("%/{}", base_name.to_lowercase());
-        let scoped: Option<String> = sqlx::query_scalar(
-            "SELECT name FROM packages WHERE lower(name) LIKE ?",
-        )
-        .bind(&pattern)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(scoped)
-    }
-
     // ── Metrics ────────────────────────────────────────────────────────────────
 
     pub async fn stats(&self) -> Result<DbStats> {

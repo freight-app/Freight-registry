@@ -7,52 +7,12 @@ static RESERVED: &[&str] = &[
     "freight", "crate", "package",
 ];
 
-/// Validate a package name.
-///
-/// Accepts two forms:
-/// - Plain name:  `mylib`  — 1–64 ASCII alphanumeric / hyphen / underscore
-/// - Scoped name: `@scope/mylib` — scope is 1–32 chars, name follows the same rules
-///
-/// Scoped names must use URL percent-encoding (`%2F`) in API paths.
+/// Validate a package name: 1–64 ASCII alphanumeric / hyphen / underscore.
 pub fn package_name(name: &str) -> Result<(), ApiError> {
-    if let Some(rest) = name.strip_prefix('@') {
-        let (scope, base) = rest.split_once('/').ok_or_else(|| {
-            ApiError::bad_request("scoped package name must be in the form @scope/name")
-        })?;
-        validate_scope_part(scope)?;
-        validate_base_name(base)?;
-        return Ok(());
-    }
-    validate_base_name(name)
+    validate_name_chars(name)
 }
 
-/// Extract the base name from a (potentially scoped) package name.
-/// `@acme/mylib` → `"mylib"`;  `mylib` → `"mylib"`.
-pub fn base_name(name: &str) -> &str {
-    if let Some(rest) = name.strip_prefix('@') {
-        if let Some((_, base)) = rest.split_once('/') {
-            return base;
-        }
-    }
-    name
-}
-
-fn validate_scope_part(scope: &str) -> Result<(), ApiError> {
-    if scope.is_empty() || scope.len() > 32 {
-        return Err(ApiError::bad_request("scope must be 1–32 characters"));
-    }
-    if !scope.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
-        return Err(ApiError::bad_request(
-            "scope may only contain ASCII letters, digits, hyphens, and underscores",
-        ));
-    }
-    if !scope.as_bytes()[0].is_ascii_alphabetic() {
-        return Err(ApiError::bad_request("scope must start with a letter"));
-    }
-    Ok(())
-}
-
-fn validate_base_name(name: &str) -> Result<(), ApiError> {
+fn validate_name_chars(name: &str) -> Result<(), ApiError> {
     if name.is_empty() || name.len() > 64 {
         return Err(ApiError::bad_request("package name must be 1–64 characters"));
     }

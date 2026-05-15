@@ -1,0 +1,25 @@
+[package]
+name        = "freight-registry"
+version     = "0.1.0"
+edition     = "2021"
+description = "Self-hosted freight package registry server"
+
+[[bin]]
+name = "freight-registry"
+path = "src/main.rs"
+
+[dependencies]
+axum               = "0.7"
+tokio              = { version = "1", features = ["full"] }
+tower-http         = { version = "0.5", features = ["trace"] }
+sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+sha2               = "0.10"
+hex                = "0.4"
+clap               = { version = "4", features = ["derive", "env"] }
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand               = "0.8"
+async-trait        = "0.1"

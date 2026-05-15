@@ -1,0 +1,20 @@
+services:
+  registry:
+    build: .
+    image: freight-registry
+    ports:
+      - "7878:7878"
+    volumes:
+      - data:/data
+    environment:
+      FREIGHT_BASE_URL: "http://localhost:7878"
+      # FREIGHT_BIND: "0.0.0.0:7878"
+      # FREIGHT_MAX_UPLOAD_MB: "50"
+      # FREIGHT_AUDIT_LOG_TTL_DAYS: "90"
+      # FREIGHT_RATE_LIMIT_READ: "120"
+      # FREIGHT_RATE_LIMIT_WRITE: "10"
+      RUST_LOG: "freight_registry=info,tower_http=info"
+    restart: unless-stopped
+
+volumes:
+  data:

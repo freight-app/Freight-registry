@@ -1,5 +1,18 @@
 # freight-registry — HTTP API Reference
 
+## Health check
+
+### `GET /health`
+
+No authentication required. Returns `200` when the server is healthy, `503` when the database is unreachable.
+
+**Response**
+```json
+{ "status": "ok", "db": "ok", "time": 1700000000 }
+```
+
+---
+
 Base path: `/api/v1`
 
 All responses are JSON unless the endpoint streams a binary file. Errors always have the shape:
@@ -31,11 +44,12 @@ Returns metadata and all version records for a package.
 **Response 200**
 ```json
 {
-  "name": "mylib",
+  "name":    "mylib",
   "description": "A useful library",
+  "latest":  "1.0.1",
   "versions": [
-    { "version": "1.0.1", "checksum": "def456...", "yanked": false },
-    { "version": "1.0.0", "checksum": "abc123...", "yanked": false }
+    { "version": "1.0.1", "checksum": "def456...", "yanked": false, "downloads": 42, "download_url": "…" },
+    { "version": "1.0.0", "checksum": "abc123...", "yanked": false, "downloads": 17, "download_url": "…" }
   ]
 }
 ```
@@ -46,11 +60,11 @@ Returns metadata and all version records for a package.
 
 ### `GET /api/v1/packages/:name/:version/download`
 
-Streams the source tarball for the requested version.
+Streams the source tarball for the requested version. The SHA-256 checksum is re-verified against the stored value before the response is sent; a mismatch returns 500.
 
 **Response headers**
 ```
-Content-Type: application/octet-stream
+Content-Type: application/gzip
 X-Checksum-SHA256: <hex>
 ```
 
@@ -59,17 +73,19 @@ X-Checksum-SHA256: <hex>
 
 ---
 
-### `GET /api/v1/search?q=<query>[&limit=<n>]`
+### `GET /api/v1/search?q=<query>[&limit=<n>][&offset=<n>]`
 
-Searches package names and descriptions (case-insensitive substring). Default `limit` is 20.
+Searches package names (case-insensitive substring). Default `limit` is 20, max 100. `offset` defaults to 0.
 
 **Response 200**
 ```json
 {
-  "results": [
-    { "name": "mylib", "description": "A useful library", "latest": "1.0.1" }
+  "packages": [
+    { "name": "mylib", "description": "A useful library", "latest": "1.0.1", "downloads": 42 }
   ],
-  "total": 1
+  "total":  1,
+  "limit":  20,
+  "offset": 0
 }
 ```
 
@@ -450,6 +466,43 @@ Lists all registered user accounts.
     { "id": 1, "username": "alice", "email": "alice@example.com", "is_admin": true },
     { "id": 2, "username": "bob",   "email": null,                 "is_admin": false }
   ]
+}
+```
+
+---
+
+### `DELETE /api/v1/admin/packages/:name`
+
+Hard-deletes a package and all its versions. Removes the DB row (cascades to versions and owners) and the tarball directory from storage. **Irreversible** — use `yank` to hide versions without destroying them.
+
+**Response 200** — `{ "ok": true }`  
+**404** — package not found.
+
+---
+
+### `GET /api/v1/audit`
+
+Returns audit log entries. Supports query filters:
+
+| Param | Description |
+|---|---|
+| `user` | Filter by username |
+| `action` | Filter by action (`login`, `publish`, `yank`, `unyank`, `register`) |
+| `since` | Unix timestamp lower bound |
+| `until` | Unix timestamp upper bound |
+| `limit` | Max rows (default 100, max 500) |
+
+**Response 200**
+```json
+{
+  "entries": [
+    {
+      "id": 1, "user_id": 1, "username": "alice",
+      "action": "publish", "package": "mylib", "version": "1.0.0",
+      "ip_addr": "127.0.0.1", "created_at": 1700000000
+    }
+  ],
+  "count": 1
 }
 ```
 

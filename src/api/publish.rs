@@ -68,6 +68,11 @@ pub async fn publish(
         }
     }
 
+    // Verify the payload is a valid gzip stream (magic bytes 0x1f 0x8b).
+    if tarball.len() < 2 || tarball[0] != 0x1f || tarball[1] != 0x8b {
+        return Err(ApiError::bad_request("tarball is not a valid gzip archive"));
+    }
+
     let checksum = hex::encode(Sha256::digest(tarball));
 
     state

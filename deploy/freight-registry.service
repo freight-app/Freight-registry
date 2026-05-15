@@ -1,0 +1,30 @@
+[Unit]
+Description=freight package registry
+Documentation=https://github.com/yourorg/freight-registry
+After=network.target
+
+[Service]
+Type=simple
+User=freight
+Group=freight
+
+ExecStart=/usr/local/bin/freight-registry \
+    --data /var/lib/freight-registry \
+    serve \
+    --base-url https://registry.example.com \
+    --bind 0.0.0.0:7878
+
+# Override any of the above via environment variables:
+# EnvironmentFile=/etc/freight-registry/env
+
+Restart=on-failure
+RestartSec=5
+
+# Restrict filesystem access to the data directory.
+ReadWritePaths=/var/lib/freight-registry
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

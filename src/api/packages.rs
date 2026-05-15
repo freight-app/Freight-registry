@@ -1,7 +1,8 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     Json,
 };
 use serde_json::{json, Value};
@@ -11,15 +12,19 @@ use super::{ApiError, ApiResult};
 
 pub async fn get_package(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    if state.limiters.api.check_key(&addr.ip()).is_err() {
+        return Err(ApiError::too_many_requests());
+    }
+
     let (pkg, versions) = state
         .db
         .get_package(&name)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("`{name}` not found")))?;
 
-    // Latest = most recent non-yanked version; fall back to most recent overall.
     let latest = versions
         .iter()
         .find(|v| v.yanked == 0)
@@ -36,6 +41,7 @@ pub async fn get_package(
                 "checksum":     v.checksum,
                 "download_url": url,
                 "yanked":       v.yanked != 0,
+                "downloads":    v.downloads,
             })
         })
         .collect();

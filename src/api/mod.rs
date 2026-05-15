@@ -14,8 +14,11 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::AppState;
 
 pub mod admin;
+pub mod audit;
+pub mod delete;
 pub mod download;
 pub mod email;
+pub mod health;
 pub mod login;
 pub mod owners;
 pub mod packages;
@@ -38,6 +41,7 @@ impl ApiError {
     pub fn forbidden(msg: impl Into<String>) -> Self      { Self(StatusCode::FORBIDDEN, msg.into()) }
     #[allow(dead_code)]
     pub fn unauthorized(msg: impl Into<String>) -> Self   { Self(StatusCode::UNAUTHORIZED, msg.into()) }
+    pub fn gone(msg: impl Into<String>) -> Self           { Self(StatusCode::GONE, msg.into()) }
     pub fn too_many_requests() -> Self                    { Self(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded — slow down".into()) }
     pub fn internal(msg: impl Into<String>) -> Self       { Self(StatusCode::INTERNAL_SERVER_ERROR, msg.into()) }
 }
@@ -67,6 +71,8 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     Router::new()
+        // Health (no auth, no rate limit)
+        .route("/health",                                   get(health::health))
         // Public read
         .route("/api/v1/packages/:name",                   get(packages::get_package))
         .route("/api/v1/search",                           get(search::search_packages))
@@ -82,6 +88,8 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/me/totp",                          delete(totp::disable))
         // Admin
         .route("/api/v1/admin/users",                      get(admin::list_users))
+        .route("/api/v1/admin/packages/:name",             delete(delete::delete_package))
+        .route("/api/v1/audit",                            get(audit::list_audit))
         // Auth
         .route("/api/v1/users/login",                      post(login::login))
         .route("/api/v1/users/register",                   post(register::register))

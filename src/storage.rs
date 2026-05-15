@@ -34,4 +34,13 @@ impl Storage {
     pub fn exists(&self, name: &str, version: &str) -> bool {
         self.tarball_path(name, version).exists()
     }
+
+    /// Remove all stored tarballs for a package. Silently succeeds if none exist.
+    pub async fn delete_package_dir(&self, name: &str) -> anyhow::Result<()> {
+        let path = self.root.join(name);
+        if path.exists() {
+            tokio::fs::remove_dir_all(path).await?;
+        }
+        Ok(())
+    }
 }

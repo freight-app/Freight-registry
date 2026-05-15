@@ -67,6 +67,12 @@ enum Command {
         /// Delete audit log entries older than this many days (omit to keep forever)
         #[arg(long, env = "FREIGHT_AUDIT_LOG_TTL_DAYS")]
         audit_log_ttl_days: Option<i64>,
+        /// Read rate limit in requests per minute per IP (default 120)
+        #[arg(long, env = "FREIGHT_RATE_LIMIT_READ", default_value_t = 120)]
+        rate_limit_read: u32,
+        /// Write rate limit in requests per minute per IP (default 10)
+        #[arg(long, env = "FREIGHT_RATE_LIMIT_WRITE", default_value_t = 10)]
+        rate_limit_write: u32,
     },
     /// Manage user accounts
     User {
@@ -143,12 +149,12 @@ async fn main() -> Result<()> {
     let db = Db::open(&cli.data.join("registry.db")).await?;
 
     match cli.command {
-        Command::Serve { bind, base_url, max_upload_mb, audit_log_ttl_days } => {
+        Command::Serve { bind, base_url, max_upload_mb, audit_log_ttl_days, rate_limit_read, rate_limit_write } => {
             let state = Arc::new(AppState {
                 db,
                 storage:  Storage::new(cli.data.join("tarballs")),
                 base_url: base_url.trim_end_matches('/').to_string(),
-                limiters: Limiters::new(),
+                limiters: Limiters::new(rate_limit_read, rate_limit_write),
             });
 
             // Spawn audit log pruning task if a TTL was configured.

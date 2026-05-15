@@ -56,9 +56,22 @@ pub struct PackageRow {
 
 #[derive(FromRow)]
 pub struct VersionRow {
-    pub version:  String,
-    pub checksum: String,
-    pub yanked:   i64,
+    pub version:   String,
+    pub checksum:  String,
+    pub yanked:    i64,
+    pub downloads: i64,
+}
+
+#[derive(FromRow)]
+pub struct AuditRow {
+    pub id:         i64,
+    pub user_id:    Option<i64>,
+    pub action:     String,
+    pub package:    Option<String>,
+    pub version:    Option<String>,
+    pub ip_addr:    Option<String>,
+    pub created_at: i64,
+    pub username:   Option<String>, // LEFT JOIN users
 }
 
 // ── Database handle ───────────────────────────────────────────────────────────
@@ -207,6 +220,10 @@ impl Db {
         self.add_column_if_missing(
             "tokens", "kind",
             "ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'api'",
+        ).await?;
+        self.add_column_if_missing(
+            "versions", "downloads",
+            "ALTER TABLE versions ADD COLUMN downloads INTEGER NOT NULL DEFAULT 0",
         ).await?;
 
         Ok(())
@@ -502,6 +519,14 @@ impl Db {
 
     // ── Packages ───────────────────────────────────────────────────────────────
 
+    /// Returns `true` if the database is reachable.
+    pub async fn ping(&self) -> bool {
+        sqlx::query_scalar::<_, i64>("SELECT 1")
+            .fetch_one(&self.pool)
+            .await
+            .is_ok()
+    }
+
     pub async fn get_package(&self, name: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
         let pkg: Option<PackageRow> = sqlx::query_as(
             "SELECT id, name, description FROM packages WHERE lower(name) = lower(?)",
@@ -513,7 +538,7 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let versions: Vec<VersionRow> = sqlx::query_as(
-            "SELECT version, checksum, yanked FROM versions
+            "SELECT version, checksum, yanked, downloads FROM versions
              WHERE package_id = ? ORDER BY created_at DESC",
         )
         .bind(pkg.id)
@@ -523,27 +548,81 @@ impl Db {
         Ok(Some((pkg, versions)))
     }
 
+    /// Fetch a single version row. Used for download checksum verification and yanked check.
+    pub async fn get_version(&self, name: &str, version: &str) -> Result<Option<VersionRow>> {
+        let row = sqlx::query_as(
+            "SELECT version, checksum, yanked, downloads FROM versions
+             WHERE version = ?
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))",
+        )
+        .bind(version)
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Increment the download counter for a version. Fire-and-forget — never blocks.
+    pub fn increment_downloads(&self, name: &str, version: &str) {
+        let pool = self.pool.clone();
+        let name = name.to_string();
+        let version = version.to_string();
+        tokio::spawn(async move {
+            let _ = sqlx::query(
+                "UPDATE versions SET downloads = downloads + 1
+                 WHERE version = ?
+                   AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))",
+            )
+            .bind(&version)
+            .bind(&name)
+            .execute(&pool)
+            .await;
+        });
+    }
+
+    /// Hard-delete a package and all its versions (cascade). Returns `false` if not found.
+    pub async fn delete_package(&self, name: &str) -> Result<bool> {
+        let n = sqlx::query("DELETE FROM packages WHERE lower(name) = lower(?)")
+            .bind(name)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        Ok(n > 0)
+    }
+
     pub async fn search_packages(
         &self,
         query: &str,
         limit: i64,
-    ) -> Result<Vec<(PackageRow, Option<VersionRow>)>> {
+        offset: i64,
+    ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
         let pattern = format!("%{query}%");
+
+        let total: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM packages
+             WHERE lower(name) LIKE lower(?)
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)",
+        )
+        .bind(&pattern)
+        .fetch_one(&self.pool)
+        .await?;
+
         let pkgs: Vec<PackageRow> = sqlx::query_as(
             "SELECT id, name, description FROM packages
              WHERE lower(name) LIKE lower(?)
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)
-             ORDER BY name LIMIT ?",
+             ORDER BY name LIMIT ? OFFSET ?",
         )
         .bind(&pattern)
         .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 
         let mut results = Vec::with_capacity(pkgs.len());
         for pkg in pkgs {
             let latest: Option<VersionRow> = sqlx::query_as(
-                "SELECT version, checksum, yanked FROM versions
+                "SELECT version, checksum, yanked, downloads FROM versions
                  WHERE package_id = ? AND yanked = 0 ORDER BY created_at DESC LIMIT 1",
             )
             .bind(pkg.id)
@@ -551,7 +630,7 @@ impl Db {
             .await?;
             results.push((pkg, latest));
         }
-        Ok(results)
+        Ok((results, total))
     }
 
     /// Publish a new version. Grants ownership to `user_id` if the package is new.
@@ -710,6 +789,37 @@ impl Db {
     }
 
     // ── Audit log ──────────────────────────────────────────────────────────────
+
+    /// Query audit log entries with optional filters. `limit` is clamped to 500.
+    pub async fn list_audit_log(
+        &self,
+        username: Option<&str>,
+        action:   Option<&str>,
+        since:    Option<i64>,
+        until:    Option<i64>,
+        limit:    i64,
+    ) -> Result<Vec<AuditRow>> {
+        let rows = sqlx::query_as(
+            "SELECT a.id, a.user_id, a.action, a.package, a.version,
+                    a.ip_addr, a.created_at, u.username
+             FROM audit_log a
+             LEFT JOIN users u ON u.id = a.user_id
+             WHERE (? IS NULL OR lower(u.username) = lower(?))
+               AND (? IS NULL OR a.action = ?)
+               AND a.created_at >= COALESCE(?, -9223372036854775808)
+               AND a.created_at <= COALESCE(?,  9223372036854775807)
+             ORDER BY a.created_at DESC
+             LIMIT ?",
+        )
+        .bind(username).bind(username)
+        .bind(action).bind(action)
+        .bind(since)
+        .bind(until)
+        .bind(limit.min(500))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
 
     /// Append an audit entry. Silently drops failures — never blocks a request.
     pub fn audit(

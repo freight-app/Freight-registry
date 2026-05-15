@@ -65,6 +65,10 @@ Options:
                               [default: 50]
   --audit-log-ttl-days <n>    Delete audit log entries older than N days (omit to keep forever)
                               [env: FREIGHT_AUDIT_LOG_TTL_DAYS]
+  --rate-limit-read <n>       Read rate limit in req/min/IP  [env: FREIGHT_RATE_LIMIT_READ]
+                              [default: 120]
+  --rate-limit-write <n>      Write rate limit in req/min/IP [env: FREIGHT_RATE_LIMIT_WRITE]
+                              [default: 10]
 ```
 
 ### `user`

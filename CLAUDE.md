@@ -121,7 +121,7 @@ Reserved package names include `std`, `core`, `freight`, `registry`, `crate`, an
 | Limiter | Quota | Applied to |
 |---|---|---|
 | `limiters.write` | 10 req/min/IP | login, register, publish |
-| `limiters.api` | 120 req/min/IP | declared but not yet wired to read endpoints |
+| `limiters.api` | 120 req/min/IP | download, get_package, search |
 | `limiters.login` | 5 failures/10 min → 15 min lockout | per username, in-memory |
 
 Login lockout only records failures when the username exists in the DB (prevents DoS lockout of arbitrary usernames).

@@ -20,13 +20,13 @@ pub struct Limiters {
 }
 
 impl Limiters {
-    pub fn new() -> Self {
+    pub fn new(read_rpm: u32, write_rpm: u32) -> Self {
         Self {
             api:   Arc::new(RateLimiter::keyed(
-                Quota::per_minute(NonZeroU32::new(120).unwrap()),
+                Quota::per_minute(NonZeroU32::new(read_rpm.max(1)).unwrap()),
             )),
             write: Arc::new(RateLimiter::keyed(
-                Quota::per_minute(NonZeroU32::new(10).unwrap()),
+                Quota::per_minute(NonZeroU32::new(write_rpm.max(1)).unwrap()),
             )),
             login: LoginLimiter::new(),
         }

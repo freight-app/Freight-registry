@@ -1,5 +1,6 @@
 mod app;
 mod client;
+mod config;
 mod ui;
 
 use std::io;
@@ -38,8 +39,15 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let client = Client::new(args.url.clone(), args.token.clone());
-    let mut app = App::new(client, args.url);
+    // Prefer CLI/env args; fall back to persisted config.
+    let (url, token) = match (args.token.clone(), config::TuiConfig::load()) {
+        (Some(tok), _) => (args.url.clone(), Some(tok)),
+        (None, Some(cfg)) => (cfg.url, Some(cfg.token)),
+        (None, None) => (args.url.clone(), None),
+    };
+
+    let client = Client::new(url.clone(), token.clone());
+    let mut app = App::new(client, url);
 
     // Setup terminal
     enable_raw_mode()?;
@@ -98,7 +106,7 @@ async fn run(
                 }
             }
             data = data_rx.recv() => {
-                if let Some(d) = data { app.handle_data(d); }
+                if let Some(d) = data { app.handle_data(d, &data_tx); }
             }
             _ = tokio::time::sleep(Duration::from_millis(250)) => {
                 // periodic redraw tick (updates spinner, relative timestamps)

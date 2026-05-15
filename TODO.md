@@ -42,8 +42,8 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 - [x] **T3 · B** **User management** — admin promote/demote/remove via HTTP (`/api/v1/admin/users/:name/*`)
 - [x] **T4 · B** **Token management** — list/create/revoke via `/api/v1/me/tokens`
 - [x] **T5 · B** **Audit log viewer** — scrollable table with `user:` / action filter (admin only)
-- [ ] **T6 · S** **Login persistence** — save token to `~/.config/freight-registry/tui.toml` after login
-- [ ] **T7 · S** **Download metrics graph** — sparkline of download counts per version in detail pane
+- [x] **T6 · S** **Login persistence** — save token to `~/.config/freight-registry/tui.toml` after login
+- [x] **T7 · S** **Download metrics graph** — sparkline of download counts per version in detail pane
 
 ## Web UI
 

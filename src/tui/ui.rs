@@ -1,9 +1,9 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, Tabs, Wrap,
+        Block, Borders, Clear, List, ListItem, Paragraph, Row, Sparkline, Table, Tabs, Wrap,
     },
     Frame,
 };
@@ -129,9 +129,14 @@ fn draw_package_list(frame: &mut Frame, area: Rect, app: &mut App) {
 fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     let Some(detail) = &app.pkg_detail else { return };
 
-    let [info_area, ver_area, hint_area] = Layout::vertical([
+    // Reserve sparkline only if there are at least 2 versions with data
+    let has_spark = detail.versions.len() >= 2;
+    let spark_height = if has_spark { 3 } else { 0 };
+
+    let [info_area, ver_area, spark_area, hint_area] = Layout::vertical([
         Constraint::Length(4),
-        Constraint::Min(0),
+        Constraint::Min(4),
+        Constraint::Length(spark_height),
         Constraint::Length(1),
     ]).areas(area);
 
@@ -163,6 +168,19 @@ fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         .highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
     frame.render_stateful_widget(ver_list, ver_area, &mut app.ver_state);
+
+    // Download sparkline (oldest → newest, versions are stored newest-first)
+    if has_spark {
+        let spark_data: Vec<u64> = detail.versions.iter().rev()
+            .map(|v| v.downloads.max(0) as u64)
+            .collect();
+        let sparkline = Sparkline::default()
+            .block(Block::default().borders(Borders::ALL)
+                .title(" Downloads (oldest → newest) "))
+            .data(&spark_data)
+            .style(Style::default().fg(Color::Cyan));
+        frame.render_widget(sparkline, spark_area);
+    }
 
     // Hints
     let mut hints = vec![Span::raw(" [Esc] back  [y] yank  [u] unyank")];

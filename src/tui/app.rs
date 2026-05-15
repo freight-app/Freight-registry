@@ -67,6 +67,7 @@ pub enum DataEvent {
     Tokens(Vec<TokenInfo>),
     Audit(Vec<AuditEntry>),
     Me { username: String, is_admin: bool },
+    LoginSuccess { url: String, token: String, username: String, is_admin: bool },
     NewToken(String),
     Done(String),
     Err(String),
@@ -159,7 +160,7 @@ impl App {
 
     // ── Data event handler ────────────────────────────────────────────────────
 
-    pub fn handle_data(&mut self, ev: DataEvent) {
+    pub fn handle_data(&mut self, ev: DataEvent, tx: &Sender<DataEvent>) {
         self.loading = false;
         match ev {
             DataEvent::Packages(pkgs) => {
@@ -188,11 +189,18 @@ impl App {
                 self.current_user = username;
                 self.is_admin = is_admin;
             }
+            DataEvent::LoginSuccess { url, token, username, is_admin } => {
+                self.client = Client::new(url, Some(token));
+                self.current_user = username;
+                self.is_admin = is_admin;
+                self.mode = AppMode::Main;
+                self.load_current_tab(tx.clone());
+                self.set_status("Logged in", false);
+            }
             DataEvent::NewToken(raw) => {
                 self.new_tok_value = Some(raw);
                 self.tok_create = None;
                 self.set_status("Token created — copy it now, it won't be shown again", false);
-                // Tokens list will refresh next time the user visits the Tokens tab.
             }
             DataEvent::Done(msg) => {
                 self.set_status(msg, false);
@@ -387,31 +395,24 @@ impl App {
                 let username = self.login.username.clone();
                 let password = self.login.password.clone();
                 let url      = self.login.url.clone();
-                let mut client = Client::new(url, None);
                 let tx2 = tx.clone();
                 tokio::spawn(async move {
+                    let client = Client::new(url.clone(), None);
                     match client.login(&username, &password).await {
                         Ok(resp) => {
-                            client.set_token(resp.token.clone());
-                            // send Me to learn admin status
-                            match client.me().await {
-                                Ok((u, a)) => {
-                                    tx2.send(DataEvent::Me { username: u, is_admin: a }).await.ok();
-                                }
-                                Err(_) => {}
-                            }
-                            tx2.send(DataEvent::Done(format!("Logged in — token: {}", resp.token))).await.ok();
+                            let token = resp.token;
+                            let authed = Client::new(url.clone(), Some(token.clone()));
+                            let (uname, is_admin) = authed.me().await.unwrap_or_default();
+                            super::config::TuiConfig { url: url.clone(), token: token.clone() }.save();
+                            tx2.send(DataEvent::LoginSuccess {
+                                url, token, username: uname, is_admin,
+                            }).await.ok();
                         }
                         Err(e) => {
                             tx2.send(DataEvent::Err(e.to_string())).await.ok();
                         }
                     }
                 });
-                // We need to update the client in app state when login succeeds.
-                // This is handled via the Done callback: the user sees the token,
-                // and can set FREIGHT_REGISTRY_TOKEN env var. For a smoother flow
-                // we do it via a special LoginSuccess event — simplest: re-check in handle_data.
-                // For now, mark loading and update client when Done arrives:
                 self.loading = true;
             }
             KeyCode::Esc => return true,

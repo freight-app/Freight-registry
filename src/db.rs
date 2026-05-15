@@ -74,6 +74,14 @@ pub struct AuditRow {
     pub username:   Option<String>, // LEFT JOIN users
 }
 
+pub struct DbStats {
+    pub packages:        i64,
+    pub versions:        i64,
+    pub users:           i64,
+    pub tokens_active:   i64,
+    pub downloads_total: i64,
+}
+
 // ── Database handle ───────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -875,5 +883,26 @@ impl Db {
             .await?
             .rows_affected();
         Ok(n)
+    }
+
+    // ── Metrics ────────────────────────────────────────────────────────────────
+
+    pub async fn stats(&self) -> Result<DbStats> {
+        let packages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM packages")
+            .fetch_one(&self.pool).await?;
+        let versions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM versions")
+            .fetch_one(&self.pool).await?;
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&self.pool).await?;
+        let tokens_active: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tokens
+             WHERE expires_at IS NULL OR expires_at > unixepoch()",
+        )
+        .fetch_one(&self.pool).await?;
+        let downloads_total: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(downloads), 0) FROM versions",
+        )
+        .fetch_one(&self.pool).await?;
+        Ok(DbStats { packages, versions, users, tokens_active, downloads_total })
     }
 }

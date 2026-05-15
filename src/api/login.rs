@@ -61,6 +61,7 @@ pub async fn login(
         .verify_password(req.password.as_bytes(), &parsed)
         .is_err()
     {
+        state.metrics.logins_fail.inc();
         let locked = state.limiters.login.record_failure(&req.username);
         if locked {
             tracing::warn!(user = %req.username, "account locked after repeated failures");
@@ -83,6 +84,7 @@ pub async fn login(
         }
     }
 
+    state.metrics.logins_ok.inc();
     state.limiters.login.record_success(&req.username);
 
     let ts = SystemTime::now()

@@ -8,7 +8,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::Value;
 
-use freight_registry::{api, db::Db, rate_limit::Limiters, storage::Storage, AppState};
+use freight_registry::{api, db::Db, metrics::Metrics, rate_limit::Limiters, storage::Storage, AppState};
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -26,6 +26,7 @@ async fn make_state() -> Arc<AppState> {
         storage:  Storage::new(tmp_dir()),
         base_url: "http://localhost".to_string(),
         limiters: Limiters::new(100_000, 100_000),
+        metrics:  Metrics::new(),
     })
 }
 
@@ -43,6 +44,14 @@ async fn send(
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, body)
+}
+
+async fn send_text(app: axum::Router, req: Request<Body>) -> (StatusCode, String) {
+    use tower::ServiceExt;
+    let resp = app.oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn get(uri: &str) -> Request<Body> {
@@ -715,4 +724,21 @@ async fn admin_remove_nonexistent_user_404() {
     let app = api::router(state, 1024 * 1024);
     let (status, _) = send(app, delete_auth("/api/v1/admin/users/nobody", &admin_tok)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Metrics endpoint ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn metrics_returns_prometheus_text() {
+    let state = make_state().await;
+    let tok = do_register(&state, "alice", "pw").await;
+    do_publish(&state, &tok, "mylib", "1.0.0").await;
+
+    let app = api::router(state, 1024 * 1024);
+    let (status, body) = send_text(app, get("/metrics")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("freight_packages"), "missing freight_packages in: {body}");
+    assert!(body.contains("freight_versions"),  "missing freight_versions in: {body}");
+    assert!(body.contains("freight_users"),     "missing freight_users in: {body}");
+    assert!(body.contains("freight_publishes"), "missing freight_publishes in: {body}");
 }

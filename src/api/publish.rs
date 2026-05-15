@@ -86,6 +86,7 @@ pub async fn publish(
         .publish_version(auth.user.id, &meta.name, meta.description.as_deref(), &meta.vers, &checksum)
         .await?;
 
+    state.metrics.publishes_total.inc();
     let ip = addr.ip().to_string();
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
     tracing::info!(user = %auth.user.username, "published {}@{}", meta.name, meta.vers);

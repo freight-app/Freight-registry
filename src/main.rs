@@ -22,6 +22,7 @@ use freight_registry::{
     api,
     auth::hash_password,
     db::Db,
+    metrics::Metrics,
     rate_limit::Limiters,
     storage::Storage,
     validate,
@@ -145,6 +146,7 @@ async fn main() -> Result<()> {
                 storage:  Storage::new(cli.data.join("tarballs")),
                 base_url: base_url.trim_end_matches('/').to_string(),
                 limiters: Limiters::new(rate_limit_read, rate_limit_write),
+                metrics:  Metrics::new(),
             });
 
             // Spawn audit log pruning task if a TTL was configured.

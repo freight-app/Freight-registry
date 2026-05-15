@@ -20,6 +20,7 @@ pub mod download;
 pub mod email;
 pub mod health;
 pub mod login;
+pub mod metrics_handler;
 pub mod my_tokens;
 pub mod owners;
 pub mod packages;
@@ -72,8 +73,9 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     Router::new()
-        // Health (no auth, no rate limit)
+        // Health + metrics (no auth, no rate limit)
         .route("/health",                                   get(health::health))
+        .route("/metrics",                                  get(metrics_handler::metrics))
         // Public read
         .route("/api/v1/packages/:name",                   get(packages::get_package))
         .route("/api/v1/search",                           get(search::search_packages))
@@ -113,7 +115,11 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
 }
 
 async fn me(auth: crate::auth::AuthToken) -> Json<serde_json::Value> {
-    Json(json!({ "login": auth.user.username, "id": auth.user.id }))
+    Json(json!({
+        "login":    auth.user.username,
+        "id":       auth.user.id,
+        "is_admin": auth.user.is_admin != 0,
+    }))
 }
 
 async fn security_headers(request: Request, next: Next) -> Response {

@@ -32,7 +32,7 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 ## Observability
 
 - [x] **O1 · S** **Health endpoint** — `GET /health` returning DB reachability and uptime
-- [ ] **O2 · B** **Metrics endpoint** — Prometheus-compatible `/metrics` (download counts, publish rate, active tokens)
+- [x] **O2 · B** **Metrics endpoint** — Prometheus-compatible `/metrics` (download counts, publish rate, active tokens)
 - [x] **O3 · S** **Structured audit log API** — `GET /api/v1/audit` (admin only) with filters
 
 ## Terminal UI (`freight-registry-tui`)

@@ -48,6 +48,7 @@ pub async fn download(
         return Err(ApiError::internal("stored checksum does not match file on disk"));
     }
 
+    state.metrics.downloads_served.inc();
     state.db.increment_downloads(&name, &version);
 
     let filename = format!("{name}-{version}.tar.gz");

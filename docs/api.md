@@ -267,34 +267,171 @@ Validation (enforced client-side before hashing):
 
 ### `POST /api/v1/users/login`
 
-Verifies username + password and returns a new API token. Rate-limited (write limiter, 10 req/min/IP).
+Verifies username + password and returns an access token + a refresh token. Rate-limited (write limiter, 10 req/min/IP).
 
 **Request body**
 ```json
 {
-  "username": "alice",
-  "password": "hunter2",
-  "token_name": "laptop-2026",
-  "expires_days": 30
+  "username":    "alice",
+  "password":    "hunter2",
+  "token_name":  "laptop-2026",
+  "expires_days": 30,
+  "totp_code":   "123456"
 }
 ```
 
-`token_name` defaults to `login-<unix-timestamp>`. `expires_days` defaults to `90`; clamped to `[1, 365]`.
+`token_name` defaults to `login-<unix-timestamp>`. `expires_days` defaults to `90`; clamped to `[1, 365]`.  
+`totp_code` is **required** when the account has TOTP enabled.
 
-The `password` field must be the SHA-256 hex digest of the plaintext password, matching the encoding used at registration (see above).
+The `password` field must be the SHA-256 hex digest of the plaintext password (see registration above).
 
 **Response 200**
 ```json
 {
-  "token": "a3f7c2…",
-  "expires_days": 30
+  "token":         "a3f7c2…",
+  "refresh_token": "b8e91f…",
+  "expires_days":   30
 }
 ```
 
-The token is shown once and never retrievable again.
+`token` is an access token (kind `access`). `refresh_token` is a 30-day refresh token (kind `refresh`) that can be exchanged for a fresh access token at `POST /api/v1/auth/refresh`. Both are shown once and never retrievable again.
 
+**400** — TOTP code required but missing, or TOTP code invalid.  
 **401** — unknown username or wrong password (intentionally ambiguous).  
-**429** — rate limit exceeded.
+**429** — rate limit exceeded or account locked out.
+
+---
+
+### `POST /api/v1/auth/refresh`
+
+Exchange a valid refresh token for a new 90-day access token.
+
+**Headers**
+```
+Authorization: Bearer <refresh_token>
+```
+
+**Response 200**
+```json
+{
+  "token":       "c2d4e6…",
+  "expires_days": 90
+}
+```
+
+**401** — token missing, expired, or not a refresh token.
+
+---
+
+## Email verification
+
+When a user registers with an email address the server logs an email verification link to stdout:
+
+```
+WARN EMAIL VERIFICATION LINK (expires in 24 h): https://registry.example.com/api/v1/users/verify-email?token=…
+```
+
+### `GET /api/v1/users/verify-email?token=<token>`
+
+Marks the user's email as verified.
+
+**Response 200**
+```json
+{ "ok": true, "message": "email verified" }
+```
+
+**400** — invalid or expired token.
+
+---
+
+## Password reset
+
+No SMTP dependency — reset links are logged to the server console.
+
+### `POST /api/v1/users/reset-password/request`
+
+**Request body**
+```json
+{ "username": "alice" }
+```
+
+Always returns 200 regardless of whether the username exists (prevents user enumeration). If the account exists, a link is logged:
+
+```
+WARN PASSWORD RESET LINK (expires in 1 h): https://registry.example.com/api/v1/users/reset-password/confirm?token=…
+```
+
+**Response 200**
+```json
+{ "ok": true, "message": "if that account exists, a reset link has been logged to the server console" }
+```
+
+---
+
+### `POST /api/v1/users/reset-password/confirm`
+
+**Request body**
+```json
+{
+  "token":        "<reset-token>",
+  "new_password": "<sha256-hex-of-new-plaintext-password>"
+}
+```
+
+`new_password` uses the same SHA-256 pre-hash encoding as registration.
+
+**Response 200**
+```json
+{ "ok": true, "message": "password updated" }
+```
+
+**400** — invalid or expired token.
+
+---
+
+## TOTP / 2FA
+
+All TOTP endpoints require a valid API token (`Authorization: Bearer <token>`).
+
+### `POST /api/v1/me/totp/enroll`
+
+Generates a new TOTP secret and stores it (not yet active). Returns the base32 secret and an `otpauth://` provisioning URI for scanning with an authenticator app.
+
+**Response 200**
+```json
+{
+  "secret": "JBSWY3DPEHPK3PXP",
+  "uri":    "otpauth://totp/freight-registry:alice?secret=JBSWY3DPEHPK3PXP&issuer=freight-registry"
+}
+```
+
+---
+
+### `POST /api/v1/me/totp/confirm`
+
+Verify the first code from the authenticator to activate TOTP.
+
+**Request body**
+```json
+{ "code": "123456" }
+```
+
+**Response 200** — `{ "ok": true }`  
+**400** — TOTP not enrolled or invalid code.
+
+---
+
+### `DELETE /api/v1/me/totp`
+
+Disable TOTP after verifying the current code.
+
+**Request body**
+```json
+{ "code": "123456" }
+```
+
+**Response 200** — `{ "ok": true }`  
+**400** — TOTP not enabled or invalid code.
 
 ---
 

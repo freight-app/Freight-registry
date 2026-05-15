@@ -10,13 +10,14 @@
 
 ## Auth & Security
 
-- [ ] **Email verification** — require verified email before first publish
-- [ ] **Password reset flow** — token-based reset via email
-- [ ] **TOTP / 2FA** — time-based one-time password as optional second factor on login
-- [ ] **CORS & CSP headers** — configure allowed origins; Content-Security-Policy for the web UI
-- [ ] **Refresh tokens** — short-lived access tokens with long-lived refresh tokens (OAuth2-style)
+- [x] **Email verification** — token logged to stdout on register; `GET /api/v1/users/verify-email?token=<t>`
+- [x] **Password reset flow** — reset link logged to stdout; `POST /api/v1/users/reset-password/request` + `/confirm`
+- [x] **TOTP / 2FA** — `totp_secret`/`totp_enabled` on users; enroll/confirm/disable endpoints; login checks code when enabled
+- [x] **CORS & CSP headers** — permissive `CorsLayer` + `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+- [x] **Refresh tokens** — `kind` column on tokens; login returns `access` + `refresh` tokens; `POST /api/v1/auth/refresh`
+- [ ] **CSP header** — Content-Security-Policy for the web UI (once HTML pages exist)
 - [x] **Admin role** — `is_admin` column on users; `AdminToken` extractor; `GET /api/v1/admin/users`; `user promote/demote` CLI
-- [ ] **Audit log pruning** — TTL or max-rows policy so the table doesn't grow unbounded
+- [x] **Audit log pruning** — `--audit-log-ttl-days` flag; background task deletes old entries every 24 h
 - [x] **Login attempt lockout** — 5 failures / 10-min window → 15-min lockout; per-username in-memory; cleared on success
 
 ## Storage & Database

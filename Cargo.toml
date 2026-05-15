@@ -4,6 +4,10 @@ version     = "0.1.0"
 edition     = "2021"
 description = "Self-hosted freight package registry server"
 
+[lib]
+name = "freight_registry"
+path = "src/lib.rs"
+
 [[bin]]
 name = "freight-registry"
 path = "src/main.rs"
@@ -26,3 +30,7 @@ rand               = "0.8"
 async-trait        = "0.1"
 argon2             = "0.5"
 governor           = { version = "0.6", features = ["dashmap"] }
+
+[dev-dependencies]
+tower          = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"

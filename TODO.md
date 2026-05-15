@@ -6,8 +6,8 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 - [ ] **C1 · B** **Token scopes** — read-only vs. publish vs. admin scopes; enforce per-endpoint
 - [ ] **C2 · B** **Scoped packages** — `@org/name` namespace support (affects validation, ownership, routes)
-- [ ] **C3 · S** **Bulk search pagination** — cursor- or page-based results for `/api/v1/search`
-- [ ] **C4 · S** **Package deletion** — hard-delete (tarball + DB row) for admins only; separate from yank
+- [x] **C3 · S** **Bulk search pagination** — cursor- or page-based results for `/api/v1/search`
+- [x] **C4 · S** **Package deletion** — hard-delete (tarball + DB row) for admins only; separate from yank
 - [x] **C5 · S** **Checksum verification on download** — re-check SHA-256 against stored value before streaming
 
 ## Auth & Security

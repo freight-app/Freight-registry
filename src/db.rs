@@ -82,6 +82,22 @@ pub struct Db {
 }
 
 impl Db {
+    /// Open an in-memory SQLite database. Only for use in tests.
+    #[doc(hidden)]
+    pub async fn open_memory() -> Result<Self> {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
+        let db = Self { pool };
+        db.migrate().await?;
+        Ok(db)
+    }
+
     pub async fn open(path: &Path) -> Result<Self> {
         let opts = SqliteConnectOptions::new()
             .filename(path)

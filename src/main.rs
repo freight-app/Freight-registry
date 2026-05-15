@@ -18,25 +18,15 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod api;
-mod auth;
-mod db;
-mod rate_limit;
-mod storage;
-mod totp;
-mod validate;
-
-use auth::hash_password;
-use db::Db;
-use rate_limit::Limiters;
-use storage::Storage;
-
-pub struct AppState {
-    pub db:       Db,
-    pub storage:  Storage,
-    pub base_url: String,
-    pub limiters: Limiters,
-}
+use freight_registry::{
+    api,
+    auth::hash_password,
+    db::Db,
+    rate_limit::Limiters,
+    storage::Storage,
+    validate,
+    AppState,
+};
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 

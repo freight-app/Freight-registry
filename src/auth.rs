@@ -53,6 +53,30 @@ impl FromRequestParts<Arc<AppState>> for AuthToken {
     }
 }
 
+/// Extractor that additionally requires `is_admin = 1` on the authenticated user.
+pub struct AdminToken {
+    #[allow(dead_code)]
+    pub user:  UserRow,
+    #[allow(dead_code)]
+    pub token: TokenRow,
+}
+
+#[async_trait]
+impl FromRequestParts<Arc<AppState>> for AdminToken {
+    type Rejection = (StatusCode, Json<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthToken::from_request_parts(parts, state).await?;
+        if auth.user.is_admin == 0 {
+            return Err(err(StatusCode::FORBIDDEN, "admin access required"));
+        }
+        Ok(AdminToken { user: auth.user, token: auth.token })
+    }
+}
+
 pub fn bearer_token(parts: &Parts) -> Option<String> {
     let auth = parts.headers.get("Authorization")?.to_str().ok()?;
     Some(auth.strip_prefix("Bearer ")?.to_string())

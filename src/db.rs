@@ -20,6 +20,7 @@ pub struct UserRow {
     pub username: String,
     pub email: Option<String>,
     pub password_hash: String,
+    pub is_admin: i64,
 }
 
 #[derive(FromRow, Clone)]
@@ -166,6 +167,21 @@ impl Db {
         .execute(&self.pool)
         .await?;
 
+        // Additive migration: is_admin column (added in v2).
+        let has_is_admin: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'is_admin'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or(0);
+        if has_is_admin == 0 {
+            sqlx::query(
+                "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
         Ok(())
     }
 
@@ -190,7 +206,7 @@ impl Db {
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<UserRow>> {
         let row = sqlx::query_as(
-            "SELECT id, username, email, password_hash FROM users
+            "SELECT id, username, email, password_hash, is_admin FROM users
              WHERE lower(username) = lower(?)",
         )
         .bind(username)
@@ -201,7 +217,7 @@ impl Db {
 
     pub async fn list_users(&self) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(
-            "SELECT id, username, email, password_hash FROM users ORDER BY username",
+            "SELECT id, username, email, password_hash, is_admin FROM users ORDER BY username",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -214,6 +230,18 @@ impl Db {
             .execute(&self.pool)
             .await?
             .rows_affected();
+        Ok(n > 0)
+    }
+
+    pub async fn set_admin(&self, username: &str, is_admin: bool) -> Result<bool> {
+        let n = sqlx::query(
+            "UPDATE users SET is_admin = ? WHERE lower(username) = lower(?)",
+        )
+        .bind(is_admin as i64)
+        .bind(username)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
         Ok(n > 0)
     }
 
@@ -277,7 +305,7 @@ impl Db {
         });
 
         let user: UserRow = sqlx::query_as(
-            "SELECT id, username, email, password_hash FROM users WHERE id = ?",
+            "SELECT id, username, email, password_hash, is_admin FROM users WHERE id = ?",
         )
         .bind(tok.user_id)
         .fetch_one(&self.pool)
@@ -471,7 +499,7 @@ impl Db {
 
     pub async fn get_package_owners(&self, package_name: &str) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(
-            "SELECT u.id, u.username, u.email, u.password_hash
+            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin
              FROM users u
              JOIN package_owners po ON po.user_id = u.id
              JOIN packages p        ON p.id = po.package_id
@@ -494,7 +522,7 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(false) };
 
         let user: Option<UserRow> = sqlx::query_as(
-            "SELECT id, username, email, password_hash FROM users WHERE lower(username) = lower(?)",
+            "SELECT id, username, email, password_hash, is_admin FROM users WHERE lower(username) = lower(?)",
         )
         .bind(username)
         .fetch_optional(&self.pool)

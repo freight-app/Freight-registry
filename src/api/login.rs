@@ -39,6 +39,12 @@ pub async fn login(
         return Err(ApiError::too_many_requests());
     }
 
+    // Per-username lockout — checked before DB to avoid the query on already-locked accounts.
+    if state.limiters.login.is_locked(&req.username) {
+        tracing::warn!(user = %req.username, "login blocked — account locked out");
+        return Err(ApiError::too_many_requests());
+    }
+
     let user = state
         .db
         .get_user_by_username(&req.username)
@@ -48,9 +54,18 @@ pub async fn login(
     let parsed = PasswordHash::new(&user.password_hash)
         .map_err(|_| ApiError::internal("password hash corrupt"))?;
 
-    Argon2::default()
+    if Argon2::default()
         .verify_password(req.password.as_bytes(), &parsed)
-        .map_err(|_| ApiError::not_found("unknown username or wrong password"))?;
+        .is_err()
+    {
+        let locked = state.limiters.login.record_failure(&req.username);
+        if locked {
+            tracing::warn!(user = %req.username, "account locked after repeated failures");
+        }
+        return Err(ApiError::not_found("unknown username or wrong password"));
+    }
+
+    state.limiters.login.record_success(&req.username);
 
     let token_name = req.token_name.unwrap_or_else(|| {
         use std::time::{SystemTime, UNIX_EPOCH};

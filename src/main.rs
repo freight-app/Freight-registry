@@ -91,6 +91,10 @@ enum UserCmd {
     List,
     /// Remove a user and all their tokens
     Remove { username: String },
+    /// Grant admin privileges to a user
+    Promote { username: String },
+    /// Revoke admin privileges from a user
+    Demote { username: String },
 }
 
 #[derive(Subcommand)]
@@ -170,13 +174,14 @@ async fn main() -> Result<()> {
                 if users.is_empty() {
                     println!("no users");
                 } else {
-                    println!("{:<6}  {:<24}  email", "id", "username");
-                    println!("{}", "-".repeat(55));
+                    println!("{:<6}  {:<24}  {:<6}  email", "id", "username", "admin");
+                    println!("{}", "-".repeat(65));
                     for u in users {
                         println!(
-                            "{:<6}  {:<24}  {}",
+                            "{:<6}  {:<24}  {:<6}  {}",
                             u.id,
                             u.username,
+                            if u.is_admin != 0 { "yes" } else { "no" },
                             u.email.as_deref().unwrap_or("-")
                         );
                     }
@@ -185,6 +190,20 @@ async fn main() -> Result<()> {
             UserCmd::Remove { username } => {
                 if db.delete_user(&username).await? {
                     println!("removed user '{username}' and all their tokens");
+                } else {
+                    anyhow::bail!("no user named '{username}'");
+                }
+            }
+            UserCmd::Promote { username } => {
+                if db.set_admin(&username, true).await? {
+                    println!("'{username}' is now an admin");
+                } else {
+                    anyhow::bail!("no user named '{username}'");
+                }
+            }
+            UserCmd::Demote { username } => {
+                if db.set_admin(&username, false).await? {
+                    println!("removed admin from '{username}'");
                 } else {
                     anyhow::bail!("no user named '{username}'");
                 }

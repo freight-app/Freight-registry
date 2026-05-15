@@ -17,7 +17,7 @@ freight-registry/
 └── src/
     ├── main.rs           # CLI (clap): serve / user / token subcommands; AppState init
     ├── db.rs             # Db handle — all SQL; row types (UserRow, TokenRow, …)
-    ├── auth.rs           # AuthToken extractor + hash_password (Argon2id PHC)
+    ├── auth.rs           # AuthToken + AdminToken extractors; hash_password (Argon2id PHC)
     ├── rate_limit.rs     # Limiters — two DefaultKeyedRateLimiter<IpAddr> via governor
     ├── storage.rs        # Storage — read/write tarballs under <data>/tarballs/<name>/
     ├── validate.rs       # Input validation — package names, semver, usernames, passwords
@@ -30,7 +30,8 @@ freight-registry/
         ├── yank.rs       # DELETE/PUT /api/v1/packages/:name/:version/yank
         ├── owners.rs     # GET/PUT/DELETE /api/v1/packages/:name/owners
         ├── login.rs      # POST /api/v1/users/login
-        └── register.rs   # POST /api/v1/users/register
+        ├── register.rs   # POST /api/v1/users/register
+        └── admin.rs      # GET  /api/v1/admin/users   (admin only)
 ```
 
 ---
@@ -149,6 +150,7 @@ PUT /api/v1/packages
 |---|---|---|---|
 | `limiters.api` | 120 req/min | 2 req/s | (reserved for general read endpoints) |
 | `limiters.write` | 10 req/min | 1 req/6s | login, register, publish |
+| `limiters.login` | 5 failures / 10 min → 15-min lockout | per username | login only |
 
 ---
 

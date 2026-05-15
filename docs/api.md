@@ -298,6 +298,34 @@ The token is shown once and never retrievable again.
 
 ---
 
+## Admin endpoints
+
+All admin endpoints require a valid token whose owner has `is_admin = true`. Returns `403` otherwise.
+
+### `GET /api/v1/admin/users`
+
+Lists all registered user accounts.
+
+**Response 200**
+```json
+{
+  "users": [
+    { "id": 1, "username": "alice", "email": "alice@example.com", "is_admin": true },
+    { "id": 2, "username": "bob",   "email": null,                 "is_admin": false }
+  ]
+}
+```
+
+---
+
+## Login lockout
+
+After **5 consecutive failed login attempts** for the same username within a 10-minute window, that username is locked for **15 minutes**. The lockout state is in-memory and resets on server restart. Successful login clears the counter immediately.
+
+Locked accounts return `429 Too Many Requests` on login attempts.
+
+---
+
 ## HTTP status code summary
 
 | Code | Meaning |

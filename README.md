@@ -62,9 +62,11 @@ Options:
 ### `user`
 
 ```
-freight-registry [--data <dir>] user add <username> [--email <email>] [--password <pw>]
+freight-registry [--data <dir>] user add     <username> [--email <email>] [--password <pw>]
 freight-registry [--data <dir>] user list
-freight-registry [--data <dir>] user remove <username>
+freight-registry [--data <dir>] user remove  <username>
+freight-registry [--data <dir>] user promote <username>
+freight-registry [--data <dir>] user demote  <username>
 ```
 
 Password is prompted interactively when `--password` is omitted.

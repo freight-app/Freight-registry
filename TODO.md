@@ -15,9 +15,9 @@
 - [ ] **TOTP / 2FA** — time-based one-time password as optional second factor on login
 - [ ] **CORS & CSP headers** — configure allowed origins; Content-Security-Policy for the web UI
 - [ ] **Refresh tokens** — short-lived access tokens with long-lived refresh tokens (OAuth2-style)
-- [ ] **Admin role** — flag users as admin; protect user management endpoints
+- [x] **Admin role** — `is_admin` column on users; `AdminToken` extractor; `GET /api/v1/admin/users`; `user promote/demote` CLI
 - [ ] **Audit log pruning** — TTL or max-rows policy so the table doesn't grow unbounded
-- [ ] **Login attempt lockout** — hard lockout after N failed attempts within a window
+- [x] **Login attempt lockout** — 5 failures / 10-min window → 15-min lockout; per-username in-memory; cleared on success
 
 ## Storage & Database
 

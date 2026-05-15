@@ -8,12 +8,13 @@
 
 use std::sync::Arc;
 
-use axum::{body::Bytes, extract::State, Json};
+use axum::{body::Bytes, extract::{ConnectInfo, State}, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 
-use crate::{auth::AuthToken, AppState};
+use crate::{auth::AuthToken, validate, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -29,17 +30,35 @@ struct PublishMeta {
 
 pub async fn publish(
     State(state): State<Arc<AppState>>,
-    _auth: AuthToken,
+    auth: AuthToken,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
+    // Strict rate limit on publish
+    if state.limiters.write.check_key(&addr.ip()).is_err() {
+        return Err(ApiError::too_many_requests());
+    }
+
     let (meta, tarball) =
         parse_body(&body).map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    if meta.name.is_empty() || meta.vers.is_empty() {
-        return Err(ApiError::bad_request("`name` and `vers` are required"));
+    // Validate name and version
+    validate::package_name(&meta.name)?;
+    validate::version(&meta.vers)?;
+
+    // Ownership check: new package → anyone with a valid token can claim it;
+    // existing package → must be a registered owner.
+    match state.db.user_owns_package(auth.user.id, &meta.name).await? {
+        None => {}           // package doesn't exist yet; first publish claims it
+        Some(true) => {}     // user is an owner, proceed
+        Some(false) => {
+            return Err(ApiError::forbidden(format!(
+                "you are not an owner of `{}`", meta.name
+            )));
+        }
     }
 
-    // Reject duplicate versions up-front (the UNIQUE constraint catches races).
+    // Reject duplicate versions up-front (UNIQUE constraint is the backstop).
     if let Some((_, versions)) = state.db.get_package(&meta.name).await? {
         if versions.iter().any(|v| v.version == meta.vers) {
             return Err(ApiError::conflict(format!(
@@ -59,10 +78,12 @@ pub async fn publish(
 
     state
         .db
-        .publish_version(&meta.name, meta.description.as_deref(), &meta.vers, &checksum)
+        .publish_version(auth.user.id, &meta.name, meta.description.as_deref(), &meta.vers, &checksum)
         .await?;
 
-    tracing::info!("published {}@{}", meta.name, meta.vers);
+    let ip = addr.ip().to_string();
+    state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
+    tracing::info!(user = %auth.user.username, "published {}@{}", meta.name, meta.vers);
 
     Ok(Json(json!({
         "ok": true,

@@ -1,31 +1,43 @@
-//! freight-registry — self-hosted package registry server.
+//! freight-registry — self-hosted freight package registry.
 //!
-//! # Usage
+//! Quick-start:
 //!
-//!   freight-registry --data /var/lib/freight-registry serve
-//!   freight-registry --data /var/lib/freight-registry token add ci-bot
-//!   freight-registry --data /var/lib/freight-registry token list
-//!   freight-registry --data /var/lib/freight-registry token revoke ci-bot
+//!   # Create the first user
+//!   freight-registry --data /var/lib/freight-registry user add alice
+//!
+//!   # Issue an API token for that user
+//!   freight-registry --data /var/lib/freight-registry token add deploy --user alice
+//!
+//!   # Start the server
+//!   freight-registry --data /var/lib/freight-registry serve \
+//!       --base-url https://freight.example.com
 
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
+use argon2::{password_hash::{rand_core::OsRng, SaltString}, Argon2, PasswordHasher};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod api;
 mod auth;
 mod db;
+mod rate_limit;
 mod storage;
+mod validate;
 
 use db::Db;
+use rate_limit::Limiters;
 use storage::Storage;
 
 pub struct AppState {
-    pub db: Db,
-    pub storage: Storage,
+    pub db:       Db,
+    pub storage:  Storage,
     pub base_url: String,
+    pub limiters: Limiters,
 }
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
 #[command(name = "freight-registry", about = "Self-hosted freight package registry")]
@@ -42,12 +54,20 @@ struct Cli {
 enum Command {
     /// Start the HTTP registry server
     Serve {
-        /// Address to bind to
+        /// Address and port to bind to
         #[arg(long, env = "FREIGHT_BIND", default_value = "0.0.0.0:7878")]
         bind: String,
-        /// Publicly reachable base URL, embedded in download links
+        /// Publicly reachable base URL (embedded in download links)
         #[arg(long, env = "FREIGHT_BASE_URL", default_value = "http://localhost:7878")]
         base_url: String,
+        /// Maximum upload size in megabytes (default 50)
+        #[arg(long, env = "FREIGHT_MAX_UPLOAD_MB", default_value_t = 50)]
+        max_upload_mb: usize,
+    },
+    /// Manage user accounts
+    User {
+        #[command(subcommand)]
+        command: UserCmd,
     },
     /// Manage API tokens
     Token {
@@ -57,14 +77,47 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-enum TokenCmd {
-    /// Create a new API token and print it (shown only once)
-    Add { name: String },
-    /// List all token names
+enum UserCmd {
+    /// Create a new user account
+    Add {
+        username: String,
+        #[arg(long)]
+        email: Option<String>,
+        /// Password (min 8 chars). Prompted interactively if omitted.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// List all users
     List,
-    /// Revoke a token by name
-    Revoke { name: String },
+    /// Remove a user and all their tokens
+    Remove { username: String },
 }
+
+#[derive(Subcommand)]
+enum TokenCmd {
+    /// Create a token for a user (printed once, never stored in plain text)
+    Add {
+        name: String,
+        #[arg(long)]
+        user: String,
+        /// Expiry in days (default: no expiry)
+        #[arg(long)]
+        expires: Option<i64>,
+    },
+    /// List tokens (all users, or filtered by --user)
+    List {
+        #[arg(long)]
+        user: Option<String>,
+    },
+    /// Revoke a token by name for a given user
+    Revoke {
+        name: String,
+        #[arg(long)]
+        user: String,
+    },
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -82,45 +135,142 @@ async fn main() -> Result<()> {
     let db = Db::open(&cli.data.join("registry.db")).await?;
 
     match cli.command {
-        Command::Serve { bind, base_url } => {
+        Command::Serve { bind, base_url, max_upload_mb } => {
             let state = Arc::new(AppState {
                 db,
-                storage: Storage::new(cli.data.join("tarballs")),
+                storage:  Storage::new(cli.data.join("tarballs")),
                 base_url: base_url.trim_end_matches('/').to_string(),
+                limiters: Limiters::new(),
             });
-            let app = api::router(state);
+            let max_bytes = max_upload_mb * 1024 * 1024;
+            let app = api::router(state, max_bytes);
             let listener = tokio::net::TcpListener::bind(&bind).await?;
-            tracing::info!("listening on {bind}");
-            axum::serve(listener, app).await?;
+            tracing::info!("listening on {bind} (max upload {max_upload_mb} MB)");
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await?;
         }
 
-        Command::Token { command } => match command {
-            TokenCmd::Add { name } => {
-                let token = db.create_token(&name).await?;
-                println!("Token '{name}' created:\n\n  {token}\n");
-                println!("Store this value — it will not be shown again.");
+        Command::User { command } => match command {
+            UserCmd::Add { username, email, password } => {
+                validate::username(&username).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let pw = match password {
+                    Some(p) => p,
+                    None => prompt_password()?,
+                };
+                validate::password(&pw).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let hash = hash_password(&pw)?;
+                db.create_user(&username, email.as_deref(), &hash).await?;
+                println!("User '{username}' created.");
             }
-            TokenCmd::List => {
-                let tokens = db.list_tokens().await?;
-                if tokens.is_empty() {
-                    println!("no tokens");
+            UserCmd::List => {
+                let users = db.list_users().await?;
+                if users.is_empty() {
+                    println!("no users");
                 } else {
-                    println!("{:<6}  name", "id");
-                    println!("{}", "-".repeat(30));
-                    for t in tokens {
-                        println!("{:<6}  {}", t.id, t.name);
+                    println!("{:<6}  {:<24}  email", "id", "username");
+                    println!("{}", "-".repeat(55));
+                    for u in users {
+                        println!(
+                            "{:<6}  {:<24}  {}",
+                            u.id,
+                            u.username,
+                            u.email.as_deref().unwrap_or("-")
+                        );
                     }
                 }
             }
-            TokenCmd::Revoke { name } => {
-                if db.revoke_token(&name).await? {
-                    println!("revoked '{name}'");
+            UserCmd::Remove { username } => {
+                if db.delete_user(&username).await? {
+                    println!("removed user '{username}' and all their tokens");
                 } else {
-                    anyhow::bail!("no token named '{name}'");
+                    anyhow::bail!("no user named '{username}'");
+                }
+            }
+        },
+
+        Command::Token { command } => match command {
+            TokenCmd::Add { name, user, expires } => {
+                let u = db
+                    .get_user_by_username(&user)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("no user named '{user}'"))?;
+                let token = db.create_token(u.id, &name, expires).await?;
+                println!("Token '{name}' created for '{user}':\n\n  {token}\n");
+                println!("Store this value — it will not be shown again.");
+                if let Some(days) = expires {
+                    println!("Expires in {days} day(s).");
+                }
+            }
+            TokenCmd::List { user } => {
+                let uid = if let Some(uname) = user {
+                    Some(
+                        db.get_user_by_username(&uname)
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("no user named '{uname}'"))?
+                            .id,
+                    )
+                } else {
+                    None
+                };
+                let tokens = db.list_tokens(uid).await?;
+                if tokens.is_empty() {
+                    println!("no tokens");
+                } else {
+                    println!("{:<6}  {:<24}  {:<20}  expires", "id", "user", "name");
+                    println!("{}", "-".repeat(65));
+                    for t in tokens {
+                        let exp = t
+                            .expires_at
+                            .map(|ts| {
+                                let days_left = (ts
+                                    - std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs() as i64)
+                                    / 86_400;
+                                format!("{days_left}d")
+                            })
+                            .unwrap_or_else(|| "never".into());
+                        println!("{:<6}  {:<24}  {:<20}  {exp}", t.id, t.username, t.name);
+                    }
+                }
+            }
+            TokenCmd::Revoke { name, user } => {
+                let u = db
+                    .get_user_by_username(&user)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("no user named '{user}'"))?;
+                if db.revoke_token(u.id, &name).await? {
+                    println!("revoked token '{name}' for '{user}'");
+                } else {
+                    anyhow::bail!("no token named '{name}' for user '{user}'");
                 }
             }
         },
     }
 
     Ok(())
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn hash_password(password: &str) -> Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?
+        .to_string();
+    Ok(hash)
+}
+
+fn prompt_password() -> Result<String> {
+    use std::io::{self, Write};
+    print!("Password: ");
+    io::stdout().flush()?;
+    let mut pw = String::new();
+    io::stdin().read_line(&mut pw)?;
+    Ok(pw.trim_end_matches('\n').to_string())
 }

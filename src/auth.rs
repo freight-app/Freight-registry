@@ -8,11 +8,17 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{db::TokenRow, AppState};
+use crate::{
+    db::{TokenRow, UserRow},
+    AppState,
+};
 
-/// Extractor that requires a valid `Authorization: Bearer <token>` header.
-/// Rejects the request with 401 if the token is absent or invalid.
-pub struct AuthToken(pub TokenRow);
+/// Extractor that requires a valid, non-expired `Authorization: Bearer <token>`.
+pub struct AuthToken {
+    pub user:  UserRow,
+    #[allow(dead_code)]
+    pub token: TokenRow,
+}
 
 #[async_trait]
 impl FromRequestParts<Arc<AppState>> for AuthToken {
@@ -22,35 +28,25 @@ impl FromRequestParts<Arc<AppState>> for AuthToken {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        let token = bearer_token(parts).ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"errors": [{"detail": "missing API token"}]})),
-            )
-        })?;
+        let raw = bearer_token(parts)
+            .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "missing API token"))?;
 
-        let row = state
+        let (token, user) = state
             .db
-            .validate_token(&token)
+            .validate_token(&raw)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"errors": [{"detail": "internal error"}]})),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"errors": [{"detail": "invalid API token"}]})),
-                )
-            })?;
+            .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?
+            .ok_or_else(|| err(StatusCode::UNAUTHORIZED, "invalid or expired API token"))?;
 
-        Ok(AuthToken(row))
+        Ok(AuthToken { user, token })
     }
 }
 
 pub fn bearer_token(parts: &Parts) -> Option<String> {
     let auth = parts.headers.get("Authorization")?.to_str().ok()?;
     Some(auth.strip_prefix("Bearer ")?.to_string())
+}
+
+fn err(status: StatusCode, detail: &str) -> (StatusCode, Json<serde_json::Value>) {
+    (status, Json(json!({ "errors": [{ "detail": detail }] })))
 }

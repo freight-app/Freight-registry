@@ -64,6 +64,22 @@ enum Command {
         /// Write rate limit in requests per minute per IP (default 10)
         #[arg(long, env = "FREIGHT_RATE_LIMIT_WRITE", default_value_t = 10)]
         rate_limit_write: u32,
+        // ── S3-compatible storage (all four must be set together) ────────────
+        /// S3/MinIO bucket name (enables S3 storage backend)
+        #[arg(long, env = "FREIGHT_S3_BUCKET")]
+        s3_bucket: Option<String>,
+        /// S3 endpoint URL, e.g. http://localhost:9000 for MinIO (omit for AWS)
+        #[arg(long, env = "FREIGHT_S3_ENDPOINT")]
+        s3_endpoint: Option<String>,
+        /// S3 access key ID
+        #[arg(long, env = "FREIGHT_S3_KEY_ID")]
+        s3_key_id: Option<String>,
+        /// S3 secret access key
+        #[arg(long, env = "FREIGHT_S3_SECRET")]
+        s3_secret: Option<String>,
+        /// S3 region (default: us-east-1)
+        #[arg(long, env = "FREIGHT_S3_REGION", default_value = "us-east-1")]
+        s3_region: String,
     },
     /// Manage user accounts
     User {
@@ -140,10 +156,29 @@ async fn main() -> Result<()> {
     let db = Db::open(&cli.data.join("registry.db")).await?;
 
     match cli.command {
-        Command::Serve { bind, base_url, max_upload_mb, audit_log_ttl_days, rate_limit_read, rate_limit_write } => {
+        Command::Serve {
+            bind, base_url, max_upload_mb, audit_log_ttl_days,
+            rate_limit_read, rate_limit_write,
+            s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
+        } => {
+            let storage = match s3_bucket {
+                Some(ref bucket) => {
+                    let key_id = s3_key_id
+                        .ok_or_else(|| anyhow::anyhow!("--s3-key-id required when --s3-bucket is set"))?;
+                    let secret = s3_secret
+                        .ok_or_else(|| anyhow::anyhow!("--s3-secret required when --s3-bucket is set"))?;
+                    tracing::info!("using S3 storage backend: bucket={bucket}");
+                    Storage::s3(bucket, s3_endpoint.as_deref(), &key_id, &secret, &s3_region)?
+                }
+                None => {
+                    tracing::info!("using local storage backend: {}", cli.data.join("tarballs").display());
+                    Storage::new(cli.data.join("tarballs"))
+                }
+            };
+
             let state = Arc::new(AppState {
                 db,
-                storage:  Storage::new(cli.data.join("tarballs")),
+                storage,
                 base_url: base_url.trim_end_matches('/').to_string(),
                 limiters: Limiters::new(rate_limit_read, rate_limit_write),
                 metrics:  Metrics::new(),

@@ -24,7 +24,7 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 ## Storage & Database
 
-- [ ] **D1 · B** **S3-compatible backend** — abstract `Storage` trait so tarballs can live in S3/MinIO
+- [x] **D1 · B** **S3-compatible backend** — abstract `Storage` trait so tarballs can live in S3/MinIO
 - [ ] **D2 · B** **PostgreSQL support** — compile-time feature flag; share schema via sqlx migrations folder
 - [x] **D3 · B** **Proper migrations** — replace startup `ALTER TABLE` migrations with versioned `.sql` files (sqlx-cli `migrate run`)
 - [x] **D4 · S** **Tarball integrity check on publish** — verify the uploaded file is a valid gzip/tar archive

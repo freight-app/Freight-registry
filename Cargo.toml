@@ -38,6 +38,8 @@ rand               = "0.8"
 async-trait        = "0.1"
 argon2             = "0.5"
 governor           = { version = "0.6", features = ["dashmap"] }
+object_store       = { version = "0.11", features = ["aws"] }
+futures            = "0.3"
 prometheus-client  = "0.22"
 ratatui            = { version = "0.28", optional = true }
 crossterm          = { version = "0.28", optional = true }

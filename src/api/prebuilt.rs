@@ -27,6 +27,18 @@ pub struct ChannelParam {
     channel: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ListParams {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    arch: Option<String>,
+    #[serde(default)]
+    os: Option<String>,
+    #[serde(default)]
+    backend: Option<String>,
+}
+
 /// PUT /api/v1/packages/:name/:version/prebuilt/:triple
 ///
 /// Body: raw `.tar.gz` bytes (the prebuilt tarball).
@@ -135,11 +147,14 @@ pub async fn download(
 }
 
 /// GET /api/v1/packages/:name/:version/prebuilts
+///
+/// Optional filters: `?arch=x86_64`, `?os=linux`, `?backend=gnu`
+/// Filters match the corresponding segment of the `arch-os-backend` triple.
 pub async fn list(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Path((name, version)): Path<(String, String)>,
-    Query(params): Query<ChannelParam>,
+    Query(params): Query<ListParams>,
 ) -> ApiResult<Json<Value>> {
     if state.limiters.api.check_key(&addr.ip()).is_err() {
         return Err(ApiError::too_many_requests());
@@ -148,12 +163,28 @@ pub async fn list(
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
 
     let rows = state.db.list_prebuilts(&name, channel, &version).await?;
-    let triples: Vec<Value> = rows.iter().map(|r| json!({
-        "triple":    r.triple,
-        "checksum":  r.checksum,
-    })).collect();
+    let triples: Vec<Value> = rows.iter()
+        .filter(|r| triple_matches(&r.triple, &params))
+        .map(|r| json!({
+            "triple":    r.triple,
+            "checksum":  r.checksum,
+        }))
+        .collect();
 
     Ok(Json(json!({ "name": name, "version": version, "channel": channel, "prebuilts": triples })))
+}
+
+/// Returns true if `triple` matches all provided filter components.
+/// Triple format is `arch-os[-backend]` (e.g. `x86_64-linux-gnu`).
+fn triple_matches(triple: &str, params: &ListParams) -> bool {
+    let parts: Vec<&str> = triple.splitn(3, '-').collect();
+    let arch    = parts.first().copied().unwrap_or("");
+    let os      = parts.get(1).copied().unwrap_or("");
+    let backend = parts.get(2).copied().unwrap_or("");
+
+    params.arch.as_deref().map_or(true, |f| arch == f)
+        && params.os.as_deref().map_or(true, |f| os == f)
+        && params.backend.as_deref().map_or(true, |f| backend == f)
 }
 
 /// Triple must be `arch-os[-abi]` format with only safe characters.

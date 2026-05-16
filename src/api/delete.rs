@@ -31,9 +31,12 @@ pub async fn delete_package(
         return Err(ApiError::not_found(format!("`{name}` not found in channel `{channel}`")));
     }
 
-    // Best-effort: remove tarballs; log but don't fail if the directory is gone.
+    // Best-effort: remove tarballs and prebuilt DB rows.
     if let Err(e) = state.storage.delete_package_dir(&name).await {
         tracing::warn!(name, "failed to remove tarball directory: {e:#}");
+    }
+    if let Err(e) = state.db.delete_package_prebuilts(&name, channel).await {
+        tracing::warn!(name, "failed to remove prebuilt rows: {e:#}");
     }
 
     tracing::info!(name, channel, "package hard-deleted by admin");

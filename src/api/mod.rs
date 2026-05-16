@@ -24,6 +24,7 @@ pub mod metrics_handler;
 pub mod my_tokens;
 pub mod owners;
 pub mod packages;
+pub mod prebuilt;
 pub mod publish;
 pub mod refresh;
 pub mod register;
@@ -77,11 +78,14 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/health",                                   get(health::health))
         .route("/metrics",                                  get(metrics_handler::metrics))
         // Public read
-        .route("/api/v1/packages/:name",                   get(packages::get_package))
-        .route("/api/v1/search",                           get(search::search_packages))
-        .route("/api/v1/packages/:name/:version/download", get(download::download))
+        .route("/api/v1/packages/:name",                             get(packages::get_package))
+        .route("/api/v1/search",                                     get(search::search_packages))
+        .route("/api/v1/packages/:name/:version/download",           get(download::download))
+        .route("/api/v1/packages/:name/:version/prebuilts",          get(prebuilt::list))
+        .route("/api/v1/packages/:name/:version/prebuilt/:triple/download", get(prebuilt::download))
         // Auth-required
-        .route("/api/v1/packages",                         put(publish::publish))
+        .route("/api/v1/packages",                                   put(publish::publish))
+        .route("/api/v1/packages/:name/:version/prebuilt/:triple",   put(prebuilt::upload))
         .route("/api/v1/packages/:name/:version/yank",     delete(yank::yank).put(yank::unyank))
         .route("/api/v1/packages/:name/owners",            get(owners::list).put(owners::add).delete(owners::remove))
         .route("/api/v1/me",                               get(me))

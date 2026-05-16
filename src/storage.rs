@@ -63,6 +63,16 @@ impl Storage {
         ObjPath::from(format!("{name}/{version}/{name}-{version}.tar.gz"))
     }
 
+    fn local_prebuilt_path(root: &PathBuf, name: &str, version: &str, triple: &str) -> PathBuf {
+        root.join(name)
+            .join(version)
+            .join(format!("{name}-{version}-{triple}.tar.gz"))
+    }
+
+    fn s3_prebuilt_key(name: &str, version: &str, triple: &str) -> ObjPath {
+        ObjPath::from(format!("{name}/{version}/{name}-{version}-{triple}.tar.gz"))
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     pub async fn save(&self, name: &str, version: &str, data: &[u8]) -> Result<()> {
@@ -90,6 +100,36 @@ impl Storage {
             }
             Backend::S3(store) => {
                 let result = store.get(&Self::s3_key(name, version)).await?;
+                Ok(result.bytes().await?.to_vec())
+            }
+        }
+    }
+
+    pub async fn save_prebuilt(&self, name: &str, version: &str, triple: &str, data: &[u8]) -> Result<()> {
+        match &self.backend {
+            Backend::Local(root) => {
+                let path = Self::local_prebuilt_path(root, name, version, triple);
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::write(&path, data).await?;
+            }
+            Backend::S3(store) => {
+                store
+                    .put(&Self::s3_prebuilt_key(name, version, triple), data.to_vec().into())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn read_prebuilt(&self, name: &str, version: &str, triple: &str) -> Result<Vec<u8>> {
+        match &self.backend {
+            Backend::Local(root) => {
+                Ok(tokio::fs::read(Self::local_prebuilt_path(root, name, version, triple)).await?)
+            }
+            Backend::S3(store) => {
+                let result = store.get(&Self::s3_prebuilt_key(name, version, triple)).await?;
                 Ok(result.bytes().await?.to_vec())
             }
         }

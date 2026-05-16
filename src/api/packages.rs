@@ -41,19 +41,21 @@ pub async fn get_package(
         .map(|v| v.version.as_str())
         .unwrap_or("");
 
-    let versions_json: Vec<Value> = versions
-        .iter()
-        .map(|v| {
-            let url = download_url(&state.base_url, &pkg.name, &v.version, channel);
-            json!({
-                "version":      v.version,
-                "checksum":     v.checksum,
-                "download_url": url,
-                "yanked":       v.yanked != 0,
-                "downloads":    v.downloads,
-            })
-        })
-        .collect();
+    let mut versions_json: Vec<Value> = Vec::new();
+    for v in &versions {
+        let url = download_url(&state.base_url, &pkg.name, &v.version, channel);
+        let prebuilts = state.db.list_prebuilts(&pkg.name, channel, &v.version).await
+            .unwrap_or_default();
+        let prebuilt_triples: Vec<&str> = prebuilts.iter().map(|p| p.triple.as_str()).collect();
+        versions_json.push(json!({
+            "version":         v.version,
+            "checksum":        v.checksum,
+            "download_url":    url,
+            "yanked":          v.yanked != 0,
+            "downloads":       v.downloads,
+            "prebuilt_triples": prebuilt_triples,
+        }));
+    }
 
     Ok(Json(json!({
         "name":        pkg.name,

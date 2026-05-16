@@ -79,6 +79,12 @@ pub struct AuditRow {
     pub username:   Option<String>, // LEFT JOIN users
 }
 
+#[derive(FromRow, Clone)]
+pub struct PrebuiltRow {
+    pub triple:    String,
+    pub checksum:  String,
+}
+
 pub struct DbStats {
     pub packages:        i64,
     pub versions:        i64,
@@ -760,6 +766,67 @@ impl Db {
             .await?
             .rows_affected();
         Ok(n)
+    }
+
+    // ── Prebuilts ─────────────────────────────────────────────────────────────
+
+    /// Record a prebuilt tarball for (name, channel, version, triple).
+    pub async fn store_prebuilt(
+        &self,
+        name:     &str,
+        channel:  &str,
+        version:  &str,
+        triple:   &str,
+        checksum: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO prebuilts (name, channel, version, triple, checksum)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(name, channel, version, triple) DO UPDATE SET checksum = excluded.checksum",
+        )
+        .bind(name).bind(channel).bind(version).bind(triple).bind(checksum)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Fetch metadata for a specific prebuilt triple, or `None` if not found.
+    pub async fn get_prebuilt(
+        &self,
+        name:    &str,
+        channel: &str,
+        version: &str,
+        triple:  &str,
+    ) -> Result<Option<PrebuiltRow>> {
+        Ok(sqlx::query_as::<_, PrebuiltRow>(
+            "SELECT triple, checksum FROM prebuilts
+             WHERE name = ? AND channel = ? AND version = ? AND triple = ?",
+        )
+        .bind(name).bind(channel).bind(version).bind(triple)
+        .fetch_optional(&self.pool).await?)
+    }
+
+    /// List all prebuilt triples available for a given (name, channel, version).
+    pub async fn list_prebuilts(
+        &self,
+        name:    &str,
+        channel: &str,
+        version: &str,
+    ) -> Result<Vec<PrebuiltRow>> {
+        Ok(sqlx::query_as::<_, PrebuiltRow>(
+            "SELECT triple, checksum FROM prebuilts
+             WHERE name = ? AND channel = ? AND version = ?
+             ORDER BY triple",
+        )
+        .bind(name).bind(channel).bind(version)
+        .fetch_all(&self.pool).await?)
+    }
+
+    /// Delete all prebuilts for a package (used when the package itself is deleted).
+    pub async fn delete_package_prebuilts(&self, name: &str, channel: &str) -> Result<()> {
+        sqlx::query("DELETE FROM prebuilts WHERE name = ? AND channel = ?")
+            .bind(name).bind(channel)
+            .execute(&self.pool).await?;
+        Ok(())
     }
 
     // ── Metrics ────────────────────────────────────────────────────────────────

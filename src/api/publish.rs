@@ -76,12 +76,19 @@ pub async fn publish(
 
     let checksum = hex::encode(Sha256::digest(tarball));
     let dependencies = extract_dependencies(tarball);
+    let readme = extract_file(tarball, "README.md")
+        .or_else(|| extract_file(tarball, "readme.md"))
+        .or_else(|| extract_file(tarball, "README"));
 
     state
         .storage
         .save(&meta.name, &meta.vers, tarball)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
+
+    if let Some(ref content) = readme {
+        let _ = state.storage.save_readme(&meta.name, content.as_bytes()).await;
+    }
 
     state
         .db
@@ -105,6 +112,25 @@ pub async fn publish(
 fn extract_dependencies(tarball: &[u8]) -> String {
     let deps = extract_dependencies_inner(tarball).unwrap_or_default();
     serde_json::to_string(&deps).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Extract a named file from a `.tar.gz` by filename (basename match only).
+/// Returns `None` if the file is not present or cannot be read as UTF-8.
+pub fn extract_file(tarball: &[u8], filename: &str) -> Option<String> {
+    use flate2::read::GzDecoder;
+    use tar::Archive;
+    let gz = GzDecoder::new(tarball);
+    let mut ar = Archive::new(gz);
+    for entry in ar.entries().ok()? {
+        let mut entry = entry.ok()?;
+        let path = entry.path().ok()?;
+        if path.file_name()?.to_string_lossy().eq_ignore_ascii_case(filename) {
+            let mut content = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut content).ok()?;
+            return Some(content);
+        }
+    }
+    None
 }
 
 fn extract_dependencies_inner(tarball: &[u8]) -> Option<HashMap<String, String>> {

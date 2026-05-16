@@ -136,6 +136,46 @@ impl Storage {
     }
 
     /// Remove all stored tarballs for a package. Silently succeeds if none exist.
+    /// Store a README for a package. Stored once per package name (not per version).
+    /// Existing README is overwritten so the latest publish wins.
+    pub async fn save_readme(&self, name: &str, content: &[u8]) -> Result<()> {
+        match &self.backend {
+            Backend::Local(root) => {
+                let path = root.join(name).join("README.md");
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::write(path, content).await?;
+            }
+            Backend::S3(store) => {
+                store
+                    .put(&ObjPath::from(format!("{name}/README.md")), content.to_vec().into())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the stored README for a package. Returns `None` if not present.
+    pub async fn read_readme(&self, name: &str) -> Option<String> {
+        let bytes = match &self.backend {
+            Backend::Local(root) => {
+                tokio::fs::read(root.join(name).join("README.md")).await.ok()?
+            }
+            Backend::S3(store) => {
+                store
+                    .get(&ObjPath::from(format!("{name}/README.md")))
+                    .await
+                    .ok()?
+                    .bytes()
+                    .await
+                    .ok()?
+                    .to_vec()
+            }
+        };
+        String::from_utf8(bytes).ok()
+    }
+
     pub async fn delete_package_dir(&self, name: &str) -> Result<()> {
         match &self.backend {
             Backend::Local(root) => {

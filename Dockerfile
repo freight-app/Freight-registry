@@ -4,14 +4,22 @@ FROM rust:1-slim AS builder
 WORKDIR /build
 
 # Cache dependencies separately from application code.
+# migrations/ must be present because sqlx::migrate! embeds SQL at compile time.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs \
+COPY migrations    ./migrations
+COPY migrations_pg ./migrations_pg
+# Stub all three targets (lib + two binaries) so `cargo build` can resolve them.
+RUN mkdir -p src/tui \
+ && echo '' > src/lib.rs \
+ && echo 'fn main() {}' > src/main.rs \
+ && echo 'fn main() {}' > src/tui/main.rs \
  && cargo build --release \
  && rm -rf src
 
 COPY src ./src
-# Touch main.rs so Cargo rebuilds the binary (not just the deps).
-RUN touch src/main.rs && cargo build --release
+# Touch entry points so Cargo knows to rebuild them.
+RUN touch src/lib.rs src/main.rs src/tui/main.rs \
+ && cargo build --release
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim

@@ -25,7 +25,7 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 ## Storage & Database
 
 - [x] **D1 · B** **S3-compatible backend** — `Storage` enum dispatches between local `PathBuf` and `object_store` S3/MinIO; `--s3-bucket/endpoint/key-id/secret/region` CLI flags
-- [ ] **D2 · B** **PostgreSQL support** — compile-time feature flag; share schema via sqlx migrations folder
+- [x] **D2 · B** **PostgreSQL support** — compile-time feature flag; share schema via sqlx migrations folder
 - [x] **D3 · B** **Proper migrations** — versioned `.sql` files in `migrations/`; `sqlx::migrate!()` runs on startup; backward-compat via `CREATE TABLE IF NOT EXISTS`
 - [x] **D4 · S** **Tarball integrity check on publish** — verify the uploaded file is a valid gzip/tar archive
 
@@ -57,8 +57,8 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 - [x] **P1 · S** **Dockerfile** — multi-stage build; non-root user; healthcheck instruction
 - [x] **P2 · S** **Docker Compose example** — service + volume mounts for data dir
 - [x] **P3 · S** **Systemd unit file** — for bare-metal installs
-- [ ] **P4 · B** **Mirror / proxy mode** — transparent fallback to freight.dev for unknown packages
+- [x] **P4 · B** **Mirror / proxy mode** — transparent fallback to freight.dev for unknown packages
 - [ ] **P8 · B** **Server-side prebuilt builds** — on source publish, queue Docker-based build jobs for each configured triple (`--build-triples x86_64-linux-gnu,aarch64-linux-gnu,x86_64-windows-gnu`); ClamAV scans build output inside the container before storing; results exposed via `GET /api/v1/packages/:name/:version/builds`; client-uploaded prebuilts remain as an escape hatch for unsupported triples (e.g. macOS, which can't legally run in Docker on Linux)
-- [ ] **P5 · B** **Org / team accounts** — organization namespaces with member-based ownership delegation
+- [x] **P5 · B** **Org / team accounts** — organization namespaces with member-based ownership delegation
 - [x] **P6 · S** **Download count tracking** — per-version counter incremented on each download; exposed on `GET /api/v1/packages/:name`
 - [x] **P7 · S** **Rate-limit config** — `--rate-limit-read` and `--rate-limit-write` CLI flags (req/min)

@@ -40,10 +40,12 @@ pub async fn search_packages(
 
     let (results, total) = state.db.search_packages(query, channel, limit, offset).await?;
 
-    let packages: Vec<Value> = results
+    let mut local_names = std::collections::HashSet::new();
+    let mut packages: Vec<Value> = results
         .into_iter()
         .filter_map(|(pkg, latest)| {
             let latest = latest?;
+            local_names.insert(pkg.name.to_lowercase());
             let url = download_url(&state.base_url, &pkg.name, &latest.version, channel);
             Some(json!({
                 "name":        pkg.name,
@@ -59,6 +61,27 @@ pub async fn search_packages(
             }))
         })
         .collect();
+
+    // Merge upstream results for packages not in the local registry.
+    if let Some(ref upstream) = state.mirror_upstream {
+        let url = if channel == DEFAULT_CHANNEL {
+            format!("{upstream}/api/v1/search?q={query}&limit={limit}&offset={offset}")
+        } else {
+            format!("{upstream}/api/v1/search?q={query}&limit={limit}&offset={offset}&channel={channel}")
+        };
+        if let Ok(resp) = reqwest::get(&url).await {
+            if let Ok(body) = resp.json::<Value>().await {
+                if let Some(upstream_pkgs) = body.get("packages").and_then(|v| v.as_array()) {
+                    for pkg in upstream_pkgs {
+                        let name = pkg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if !local_names.contains(&name.to_lowercase()) {
+                            packages.push(pkg.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     Ok(Json(json!({
         "packages": packages,

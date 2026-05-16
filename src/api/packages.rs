@@ -7,9 +7,17 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use reqwest;
 
 use crate::{db::DEFAULT_CHANNEL, AppState};
 use super::{ApiError, ApiResult};
+
+/// Proxy a GET request to `url` and return parsed JSON, or `None` on 404.
+async fn proxy_get_json(url: &str) -> Option<serde_json::Value> {
+    let resp = reqwest::get(url).await.ok()?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND { return None; }
+    resp.json().await.ok()
+}
 
 #[derive(Deserialize)]
 pub struct ChannelParam {
@@ -17,20 +25,14 @@ pub struct ChannelParam {
     channel: Option<String>,
 }
 
-pub async fn get_package(
-    State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(name): Path<String>,
-    Query(params): Query<ChannelParam>,
+async fn get_package_local(
+    state: &Arc<AppState>,
+    name: &str,
+    channel: &str,
 ) -> ApiResult<Json<Value>> {
-    if state.limiters.api.check_key(&addr.ip()).is_err() {
-        return Err(ApiError::too_many_requests());
-    }
-
-    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
     let (pkg, versions) = state
         .db
-        .get_package(&name, channel)
+        .get_package(name, channel)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("`{name}` not found in channel `{channel}`")))?;
 
@@ -64,6 +66,39 @@ pub async fn get_package(
         "latest":      latest,
         "versions":    versions_json,
     })))
+}
+
+pub async fn get_package(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(name): Path<String>,
+    Query(params): Query<ChannelParam>,
+) -> ApiResult<Json<Value>> {
+    if state.limiters.api.check_key(&addr.ip()).is_err() {
+        return Err(ApiError::too_many_requests());
+    }
+
+    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+
+    match get_package_local(&state, &name, channel).await {
+        Ok(resp) => return Ok(resp),
+        Err(ApiError(axum::http::StatusCode::NOT_FOUND, _)) => {}
+        Err(e) => return Err(e),
+    }
+
+    // Not found locally — try the mirror upstream if configured.
+    if let Some(ref upstream) = state.mirror_upstream {
+        let url = if channel == DEFAULT_CHANNEL {
+            format!("{upstream}/api/v1/packages/{name}")
+        } else {
+            format!("{upstream}/api/v1/packages/{name}?channel={channel}")
+        };
+        if let Some(body) = proxy_get_json(&url).await {
+            return Ok(Json(body));
+        }
+    }
+
+    Err(ApiError::not_found(format!("`{name}` not found in channel `{channel}`")))
 }
 
 pub fn download_url(base_url: &str, name: &str, version: &str, channel: &str) -> String {

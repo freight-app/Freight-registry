@@ -23,10 +23,11 @@ async fn make_state() -> Arc<AppState> {
     let db = Db::open_memory().await.unwrap();
     Arc::new(AppState {
         db,
-        storage:  Storage::new(tmp_dir()),
-        base_url: "http://localhost".to_string(),
-        limiters: Limiters::new(100_000, 100_000),
-        metrics:  Metrics::new(),
+        storage:         Storage::new(tmp_dir()),
+        base_url:        "http://localhost".to_string(),
+        limiters:        Limiters::new(100_000, 100_000),
+        metrics:         Metrics::new(),
+        mirror_upstream: None,
     })
 }
 

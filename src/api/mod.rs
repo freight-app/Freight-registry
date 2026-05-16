@@ -22,6 +22,7 @@ pub mod health;
 pub mod login;
 pub mod metrics_handler;
 pub mod my_tokens;
+pub mod orgs;
 pub mod owners;
 pub mod packages;
 pub mod prebuilt;
@@ -96,6 +97,12 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // Token management (current user)
         .route("/api/v1/me/tokens",                        get(my_tokens::list).post(my_tokens::create))
         .route("/api/v1/me/tokens/:name",                  delete(my_tokens::revoke))
+        // Orgs
+        .route("/api/v1/orgs",                             axum::routing::post(orgs::create_org))
+        .route("/api/v1/orgs/:name",                       get(orgs::get_org).delete(orgs::delete_org))
+        .route("/api/v1/orgs/:name/members",               get(orgs::list_members).put(orgs::add_member))
+        .route("/api/v1/orgs/:name/members/:username",     axum::routing::delete(orgs::remove_member))
+        .route("/api/v1/packages/:name/:channel/org",      put(orgs::set_package_org))
         // Admin
         .route("/api/v1/admin/users",                      get(admin::list_users))
         .route("/api/v1/admin/users/:name/promote",        post(admin::promote_user))

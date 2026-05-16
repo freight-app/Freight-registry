@@ -13,9 +13,11 @@ use rate_limit::Limiters;
 use storage::Storage;
 
 pub struct AppState {
-    pub db:       Db,
-    pub storage:  Storage,
-    pub base_url: String,
-    pub limiters: Limiters,
-    pub metrics:  Metrics,
+    pub db:              Db,
+    pub storage:         Storage,
+    pub base_url:        String,
+    pub limiters:        Limiters,
+    pub metrics:         Metrics,
+    /// Base URL of an upstream registry to proxy unknown packages from.
+    pub mirror_upstream: Option<String>,
 }

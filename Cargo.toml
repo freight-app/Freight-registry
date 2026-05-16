@@ -18,14 +18,15 @@ path = "src/tui/main.rs"
 required-features = ["tui"]
 
 [features]
-tui = ["dep:ratatui", "dep:crossterm", "dep:reqwest", "dep:toml"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:toml"]
 
 [dependencies]
 axum               = "0.7"
 tokio              = { version = "1", features = ["full"] }
 tower-http         = { version = "0.5", features = ["trace", "cors"] }
 totp-rs            = { version = "5", features = ["gen_secret", "otpauth"] }
-sqlx               = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+sqlx               = { version = "0.8", features = ["sqlite", "postgres", "any", "runtime-tokio", "macros", "migrate"] }
+reqwest            = { version = "0.12", features = ["json", "stream"] }
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
 sha2               = "0.10"
@@ -44,7 +45,6 @@ prometheus-client  = "0.22"
 toml               = { version = "0.8", optional = true }
 ratatui            = { version = "0.28", optional = true }
 crossterm          = { version = "0.28", optional = true }
-reqwest            = { version = "0.12", features = ["json"], optional = true }
 
 [dev-dependencies]
 tower          = { version = "0.4", features = ["util"] }

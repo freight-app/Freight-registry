@@ -34,9 +34,14 @@ use freight_registry::{
 #[derive(Parser)]
 #[command(name = "freight-registry", about = "Self-hosted freight package registry")]
 struct Cli {
-    /// Directory for the database and stored tarballs
+    /// Directory for the database and stored tarballs (used when --database-url is absent)
     #[arg(long, env = "FREIGHT_DATA_DIR", default_value = "/var/lib/freight-registry")]
     data: PathBuf,
+
+    /// Database URL (sqlite:///path/to/db or postgres://user:pass@host/db).
+    /// When set, overrides the default SQLite file in --data.
+    #[arg(long, env = "DATABASE_URL")]
+    database_url: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -80,6 +85,9 @@ enum Command {
         /// S3 region (default: us-east-1)
         #[arg(long, env = "FREIGHT_S3_REGION", default_value = "us-east-1")]
         s3_region: String,
+        /// Upstream registry to proxy unknown packages from (e.g. https://freight.dev)
+        #[arg(long, env = "FREIGHT_MIRROR_UPSTREAM")]
+        mirror_upstream: Option<String>,
     },
     /// Manage user accounts
     User {
@@ -153,13 +161,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.data)?;
 
-    let db = Db::open(&cli.data.join("registry.db")).await?;
+    let db = if let Some(ref url) = cli.database_url {
+        tracing::info!("using database: {url}");
+        Db::open_url(url).await?
+    } else {
+        Db::open(&cli.data.join("registry.db")).await?
+    };
 
     match cli.command {
         Command::Serve {
             bind, base_url, max_upload_mb, audit_log_ttl_days,
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
+            mirror_upstream,
         } => {
             let storage = match s3_bucket {
                 Some(ref bucket) => {
@@ -176,12 +190,17 @@ async fn main() -> Result<()> {
                 }
             };
 
+            if let Some(ref upstream) = mirror_upstream {
+                tracing::info!("mirror upstream: {upstream}");
+            }
+
             let state = Arc::new(AppState {
                 db,
                 storage,
-                base_url: base_url.trim_end_matches('/').to_string(),
-                limiters: Limiters::new(rate_limit_read, rate_limit_write),
-                metrics:  Metrics::new(),
+                base_url:        base_url.trim_end_matches('/').to_string(),
+                limiters:        Limiters::new(rate_limit_read, rate_limit_write),
+                metrics:         Metrics::new(),
+                mirror_upstream: mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
             });
 
             // Spawn audit log pruning task if a TTL was configured.

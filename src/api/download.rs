@@ -30,46 +30,69 @@ pub async fn download(
     }
 
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
-    let ver = state
-        .db
-        .get_version(&name, &version, channel)
-        .await?
-        .ok_or_else(|| ApiError::not_found(format!("`{name}@{version}` not found in channel `{channel}`")))?;
 
-    if ver.yanked != 0 {
-        return Err(ApiError::gone(format!("`{name}@{version}` has been yanked")));
+    match state.db.get_version(&name, &version, channel).await? {
+        Some(ver) => {
+            if ver.yanked != 0 {
+                return Err(ApiError::gone(format!("`{name}@{version}` has been yanked")));
+            }
+
+            let data = state
+                .storage
+                .read(&name, &version)
+                .await
+                .map_err(|_| ApiError::not_found(format!("`{name}@{version}` not found")))?;
+
+            let actual = hex::encode(Sha256::digest(&data));
+            if actual != ver.checksum {
+                tracing::error!(
+                    name, version,
+                    expected = %ver.checksum, actual = %actual,
+                    "checksum mismatch on download",
+                );
+                return Err(ApiError::internal("stored checksum does not match file on disk"));
+            }
+
+            state.metrics.downloads_served.inc();
+            state.db.increment_downloads(&name, &version, channel);
+
+            let filename = format!("{name}-{version}.tar.gz");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/gzip")
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{filename}\""),
+                )
+                .header("x-checksum-sha256", &ver.checksum)
+                .body(Body::from(data))
+                .map_err(|e| ApiError::internal(e.to_string()))
+        }
+        None => {
+            // Not found locally — proxy from upstream mirror if configured.
+            if let Some(ref upstream) = state.mirror_upstream {
+                let url = if channel == DEFAULT_CHANNEL {
+                    format!("{upstream}/api/v1/packages/{name}/{version}/download")
+                } else {
+                    format!("{upstream}/api/v1/packages/{name}/{version}/download?channel={channel}")
+                };
+                if let Ok(resp) = reqwest::get(&url).await {
+                    if resp.status() != reqwest::StatusCode::NOT_FOUND {
+                        let bytes = resp.bytes().await.unwrap_or_default();
+                        let filename = format!("{name}-{version}.tar.gz");
+                        return Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "application/gzip")
+                            .header(
+                                header::CONTENT_DISPOSITION,
+                                format!("attachment; filename=\"{filename}\""),
+                            )
+                            .body(Body::from(bytes))
+                            .map_err(|e| ApiError::internal(e.to_string()));
+                    }
+                }
+            }
+            Err(ApiError::not_found(format!("`{name}@{version}` not found in channel `{channel}`")))
+        }
     }
-
-    let data = state
-        .storage
-        .read(&name, &version)
-        .await
-        .map_err(|_| ApiError::not_found(format!("`{name}@{version}` not found")))?;
-
-    let actual = hex::encode(Sha256::digest(&data));
-    if actual != ver.checksum {
-        tracing::error!(
-            name, version,
-            expected = %ver.checksum, actual = %actual,
-            "checksum mismatch on download",
-        );
-        return Err(ApiError::internal("stored checksum does not match file on disk"));
-    }
-
-    state.metrics.downloads_served.inc();
-    state.db.increment_downloads(&name, &version, channel);
-
-    let filename = format!("{name}-{version}.tar.gz");
-    let resp = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/gzip")
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{filename}\""),
-        )
-        .header("x-checksum-sha256", &ver.checksum)
-        .body(Body::from(data))
-        .map_err(|e| ApiError::internal(e.to_string()))?;
-
-    Ok(resp)
 }

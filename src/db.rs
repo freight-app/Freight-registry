@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
-use sqlx::{sqlite::SqliteConnectOptions, FromRow, SqlitePool};
+use sqlx::{AnyPool, FromRow};
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -85,6 +85,21 @@ pub struct PrebuiltRow {
     pub checksum:  String,
 }
 
+#[derive(FromRow, Clone)]
+pub struct OrgRow {
+    pub id:          i64,
+    pub name:        String,
+    pub description: Option<String>,
+    pub created_at:  i64,
+}
+
+#[derive(FromRow, Clone)]
+pub struct OrgMemberRow {
+    pub user_id:  i64,
+    pub username: String,
+    pub role:     String,
+}
+
 pub struct DbStats {
     pub packages:        i64,
     pub versions:        i64,
@@ -97,35 +112,64 @@ pub struct DbStats {
 
 #[derive(Clone)]
 pub struct Db {
-    pool: SqlitePool,
+    pool:        AnyPool,
+    is_postgres: bool,
 }
 
 impl Db {
+    async fn run_sqlite_migrations(pool: &AnyPool) -> Result<()> {
+        sqlx::migrate!("./migrations").run(pool).await?;
+        Ok(())
+    }
+
+    async fn run_pg_migrations(pool: &AnyPool) -> Result<()> {
+        sqlx::migrate!("./migrations_pg").run(pool).await?;
+        Ok(())
+    }
+
     /// Open an in-memory SQLite database. Only for use in tests.
     #[doc(hidden)]
     pub async fn open_memory() -> Result<Self> {
-        use sqlx::sqlite::SqlitePoolOptions;
-        let pool = SqlitePoolOptions::new()
+        sqlx::any::install_default_drivers();
+        // Single connection: SQLite in-memory DBs are per-connection, so we must
+        // keep exactly one to share the same schema between migrations and queries.
+        let pool = sqlx::any::AnyPoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?;
-        sqlx::query("PRAGMA foreign_keys = ON")
-            .execute(&pool)
-            .await?;
-        let db = Self { pool };
-        sqlx::migrate!().run(&db.pool).await?;
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+        let db = Self { pool, is_postgres: false };
+        Self::run_sqlite_migrations(&db.pool).await?;
         Ok(db)
     }
 
+    /// Open a SQLite database at `path` (the default, local-file backend).
     pub async fn open(path: &Path) -> Result<Self> {
-        let opts = SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-            .pragma("foreign_keys", "ON")
-            .pragma("journal_mode", "WAL");
-        let pool = SqlitePool::connect_with(opts).await?;
-        let db = Self { pool };
-        sqlx::migrate!().run(&db.pool).await?;
+        sqlx::any::install_default_drivers();
+        let url = format!("sqlite://{}?mode=rwc", path.display());
+        let pool = AnyPool::connect(&url).await?;
+        sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+        sqlx::query("PRAGMA journal_mode = WAL").execute(&pool).await?;
+        let db = Self { pool, is_postgres: false };
+        Self::run_sqlite_migrations(&db.pool).await?;
+        Ok(db)
+    }
+
+    /// Open a database from an explicit `DATABASE_URL`.
+    /// Supports `sqlite://...` and `postgres://...` / `postgresql://...`.
+    pub async fn open_url(url: &str) -> Result<Self> {
+        sqlx::any::install_default_drivers();
+        let is_postgres = url.starts_with("postgres://") || url.starts_with("postgresql://");
+        let pool = AnyPool::connect(url).await?;
+        if !is_postgres {
+            sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;
+        }
+        let db = Self { pool, is_postgres };
+        if is_postgres {
+            Self::run_pg_migrations(&db.pool).await?;
+        } else {
+            Self::run_sqlite_migrations(&db.pool).await?;
+        }
         Ok(db)
     }
 
@@ -838,15 +882,178 @@ impl Db {
             .fetch_one(&self.pool).await?;
         let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
             .fetch_one(&self.pool).await?;
+        let now = unix_now();
         let tokens_active: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tokens
-             WHERE expires_at IS NULL OR expires_at > unixepoch()",
+            "SELECT COUNT(*) FROM tokens WHERE expires_at IS NULL OR expires_at > ?",
         )
+        .bind(now)
         .fetch_one(&self.pool).await?;
         let downloads_total: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(downloads), 0) FROM versions",
         )
         .fetch_one(&self.pool).await?;
         Ok(DbStats { packages, versions, users, tokens_active, downloads_total })
+    }
+
+    // ── Organizations ──────────────────────────────────────────────────────────
+
+    pub async fn create_org(&self, name: &str, description: Option<&str>, owner_id: i64) -> Result<i64> {
+        let org_id: i64 = sqlx::query_scalar(
+            "INSERT INTO organizations (name, description) VALUES (?, ?) RETURNING id",
+        )
+        .bind(name)
+        .bind(description)
+        .fetch_one(&self.pool)
+        .await?;
+
+        sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'owner')")
+            .bind(org_id)
+            .bind(owner_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(org_id)
+    }
+
+    pub async fn get_org(&self, name: &str) -> Result<Option<OrgRow>> {
+        let row = sqlx::query_as(
+            "SELECT id, name, description, created_at FROM organizations WHERE lower(name) = lower(?)",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn list_orgs(&self) -> Result<Vec<OrgRow>> {
+        let rows = sqlx::query_as(
+            "SELECT id, name, description, created_at FROM organizations ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn delete_org(&self, name: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM organizations WHERE lower(name) = lower(?)")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn list_org_members(&self, org_name: &str) -> Result<Vec<OrgMemberRow>> {
+        let rows = sqlx::query_as(
+            "SELECT m.user_id, u.username, m.role
+             FROM org_members m
+             JOIN organizations o ON o.id = m.org_id
+             JOIN users u ON u.id = m.user_id
+             WHERE lower(o.name) = lower(?)
+             ORDER BY m.role DESC, u.username",
+        )
+        .bind(org_name)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn add_org_member(&self, org_name: &str, username: &str, role: &str) -> Result<bool> {
+        let org = match self.get_org(org_name).await? {
+            Some(o) => o,
+            None => return Ok(false),
+        };
+        let user = match self.get_user_by_username(username).await? {
+            Some(u) => u,
+            None => return Ok(false),
+        };
+        sqlx::query(
+            "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+             ON CONFLICT(org_id, user_id) DO UPDATE SET role = excluded.role",
+        )
+        .bind(org.id)
+        .bind(user.id)
+        .bind(role)
+        .execute(&self.pool)
+        .await?;
+        Ok(true)
+    }
+
+    pub async fn remove_org_member(&self, org_name: &str, username: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM org_members
+             WHERE org_id = (SELECT id FROM organizations WHERE lower(name) = lower(?))
+               AND user_id = (SELECT id FROM users WHERE lower(username) = lower(?))",
+        )
+        .bind(org_name)
+        .bind(username)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn is_org_owner(&self, org_name: &str, user_id: i64) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM org_members m
+             JOIN organizations o ON o.id = m.org_id
+             WHERE lower(o.name) = lower(?) AND m.user_id = ? AND m.role = 'owner'",
+        )
+        .bind(org_name)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    pub async fn is_org_member(&self, org_name: &str, user_id: i64) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM org_members m
+             JOIN organizations o ON o.id = m.org_id
+             WHERE lower(o.name) = lower(?) AND m.user_id = ?",
+        )
+        .bind(org_name)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    pub async fn set_package_org(&self, package_name: &str, channel: &str, org_name: Option<&str>) -> Result<bool> {
+        let org_id: Option<i64> = if let Some(name) = org_name {
+            match self.get_org(name).await? {
+                Some(o) => Some(o.id),
+                None => return Ok(false),
+            }
+        } else {
+            None
+        };
+        let result = sqlx::query(
+            "UPDATE packages SET org_id = ? WHERE lower(name) = lower(?) AND lower(channel) = lower(?)",
+        )
+        .bind(org_id)
+        .bind(package_name)
+        .bind(channel)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if a user can publish/modify a package (owns it directly or via org membership).
+    pub async fn user_can_manage_package(&self, package_name: &str, channel: &str, user_id: i64) -> Result<bool> {
+        // Direct ownership check (existing table).
+        if self.user_owns_package(user_id, package_name, channel).await? == Some(true) {
+            return Ok(true);
+        }
+        // Org membership check.
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM packages p
+             JOIN org_members m ON m.org_id = p.org_id
+             WHERE lower(p.name) = lower(?) AND lower(p.channel) = lower(?) AND m.user_id = ?",
+        )
+        .bind(package_name)
+        .bind(channel)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
     }
 }

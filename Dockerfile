@@ -3,6 +3,10 @@ FROM rust:1-slim AS builder
 
 WORKDIR /build
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
 # Cache dependencies separately from application code.
 # migrations/ must be present because sqlx::migrate! embeds SQL at compile time.
 COPY Cargo.toml Cargo.lock ./

@@ -5,7 +5,7 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 ## Core / Protocol
 
 - [x] **C1 · B** **Token scopes** — `"read"` / `"publish"` (default) / `"admin"` scopes on tokens; `PublishToken` extractor enforces scope on all write endpoints; `AdminToken` requires `is_admin=1` + scope ≥ publish; `POST /api/v1/me/tokens` accepts `scope` field
-- [x] **C2 · S** **Registry alias in client manifest** — `@registry/name` shorthand in `freight.toml` maps to `name = { version = "...", repo = "<registry>" }`; handled purely client-side in the Freight resolver (see Freight S16)
+- [x] **C2 · S** **Registry channels** — single server hosts multiple named channels (e.g. `"stable"`, `"experimental"`); `UNIQUE(name, channel)` in DB; all package/download/yank/owners/delete/search endpoints accept `?channel=` query param; publish accepts `channel` in JSON metadata; default channel is `"stable"`; client stores `channel = "..."` in dep table and passes it to all API calls
 - [x] **C3 · S** **Bulk search pagination** — cursor- or page-based results for `/api/v1/search`
 - [x] **C4 · S** **Package deletion** — hard-delete (tarball + DB row) for admins only; separate from yank
 - [x] **C5 · S** **Checksum verification on download** — re-check SHA-256 against stored value before streaming

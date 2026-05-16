@@ -53,8 +53,11 @@ pub struct TokenWithUser {
 pub struct PackageRow {
     pub id:          i64,
     pub name:        String,
+    pub channel:     String,
     pub description: Option<String>,
 }
+
+pub const DEFAULT_CHANNEL: &str = "stable";
 
 #[derive(FromRow)]
 pub struct VersionRow {
@@ -407,11 +410,13 @@ impl Db {
             .is_ok()
     }
 
-    pub async fn get_package(&self, name: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
+    pub async fn get_package(&self, name: &str, channel: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, description FROM packages WHERE lower(name) = lower(?)",
+            "SELECT id, name, channel, description FROM packages \
+             WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(name)
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -429,41 +434,45 @@ impl Db {
     }
 
     /// Fetch a single version row. Used for download checksum verification and yanked check.
-    pub async fn get_version(&self, name: &str, version: &str) -> Result<Option<VersionRow>> {
+    pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(
             "SELECT version, checksum, yanked, downloads FROM versions
              WHERE version = ?
-               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))",
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
         )
         .bind(version)
         .bind(name)
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
     }
 
     /// Increment the download counter for a version. Fire-and-forget — never blocks.
-    pub fn increment_downloads(&self, name: &str, version: &str) {
+    pub fn increment_downloads(&self, name: &str, version: &str, channel: &str) {
         let pool = self.pool.clone();
         let name = name.to_string();
         let version = version.to_string();
+        let channel = channel.to_string();
         tokio::spawn(async move {
             let _ = sqlx::query(
                 "UPDATE versions SET downloads = downloads + 1
                  WHERE version = ?
-                   AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))",
+                   AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
             )
             .bind(&version)
             .bind(&name)
+            .bind(&channel)
             .execute(&pool)
             .await;
         });
     }
 
     /// Hard-delete a package and all its versions (cascade). Returns `false` if not found.
-    pub async fn delete_package(&self, name: &str) -> Result<bool> {
-        let n = sqlx::query("DELETE FROM packages WHERE lower(name) = lower(?)")
+    pub async fn delete_package(&self, name: &str, channel: &str) -> Result<bool> {
+        let n = sqlx::query("DELETE FROM packages WHERE lower(name) = lower(?) AND channel = ?")
             .bind(name)
+            .bind(channel)
             .execute(&self.pool)
             .await?
             .rows_affected();
@@ -473,6 +482,7 @@ impl Db {
     pub async fn search_packages(
         &self,
         query: &str,
+        channel: &str,
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
@@ -480,20 +490,22 @@ impl Db {
 
         let total: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM packages
-             WHERE lower(name) LIKE lower(?)
+             WHERE lower(name) LIKE lower(?) AND channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)",
         )
         .bind(&pattern)
+        .bind(channel)
         .fetch_one(&self.pool)
         .await?;
 
         let pkgs: Vec<PackageRow> = sqlx::query_as(
-            "SELECT id, name, description FROM packages
-             WHERE lower(name) LIKE lower(?)
+            "SELECT id, name, channel, description FROM packages
+             WHERE lower(name) LIKE lower(?) AND channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)
              ORDER BY name LIMIT ? OFFSET ?",
         )
         .bind(&pattern)
+        .bind(channel)
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
@@ -518,23 +530,26 @@ impl Db {
         &self,
         user_id: i64,
         name: &str,
+        channel: &str,
         description: Option<&str>,
         version: &str,
         checksum: &str,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO packages (name, description) VALUES (?, ?)
-             ON CONFLICT(name) DO UPDATE SET description = COALESCE(excluded.description, description)",
+            "INSERT INTO packages (name, channel, description) VALUES (?, ?, ?)
+             ON CONFLICT(name, channel) DO UPDATE SET description = COALESCE(excluded.description, description)",
         )
         .bind(name)
+        .bind(channel)
         .bind(description)
         .execute(&self.pool)
         .await?;
 
         let pkg: PackageRow = sqlx::query_as(
-            "SELECT id, name, description FROM packages WHERE lower(name) = lower(?)",
+            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(name)
+        .bind(channel)
         .fetch_one(&self.pool)
         .await?;
 
@@ -566,15 +581,16 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_yanked(&self, name: &str, version: &str, yanked: bool) -> Result<bool> {
+    pub async fn set_yanked(&self, name: &str, version: &str, channel: &str, yanked: bool) -> Result<bool> {
         let n = sqlx::query(
             "UPDATE versions SET yanked = ?
              WHERE version = ?
-               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))",
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
         )
         .bind(yanked as i64)
         .bind(version)
         .bind(name)
+        .bind(channel)
         .execute(&self.pool)
         .await?
         .rows_affected();
@@ -588,11 +604,13 @@ impl Db {
         &self,
         user_id: i64,
         package_name: &str,
+        channel: &str,
     ) -> Result<Option<bool>> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, description FROM packages WHERE lower(name) = lower(?)",
+            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(package_name)
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?;
 
@@ -609,27 +627,29 @@ impl Db {
         Ok(Some(owns > 0))
     }
 
-    pub async fn get_package_owners(&self, package_name: &str) -> Result<Vec<UserRow>> {
+    pub async fn get_package_owners(&self, package_name: &str, channel: &str) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(
             "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
                     u.email_verified, u.totp_secret, u.totp_enabled
              FROM users u
              JOIN package_owners po ON po.user_id = u.id
              JOIN packages p        ON p.id = po.package_id
-             WHERE lower(p.name) = lower(?)
+             WHERE lower(p.name) = lower(?) AND p.channel = ?
              ORDER BY u.username",
         )
         .bind(package_name)
+        .bind(channel)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
     }
 
-    pub async fn add_package_owner(&self, package_name: &str, username: &str) -> Result<bool> {
+    pub async fn add_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, description FROM packages WHERE lower(name) = lower(?)",
+            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(package_name)
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?;
         let Some(pkg) = pkg else { return Ok(false) };
@@ -654,13 +674,14 @@ impl Db {
         Ok(true)
     }
 
-    pub async fn remove_package_owner(&self, package_name: &str, username: &str) -> Result<bool> {
+    pub async fn remove_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
         let n = sqlx::query(
             "DELETE FROM package_owners
-             WHERE package_id = (SELECT id FROM packages WHERE lower(name) = lower(?))
+             WHERE package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)
                AND user_id    = (SELECT id FROM users    WHERE lower(username) = lower(?))",
         )
         .bind(package_name)
+        .bind(channel)
         .bind(username)
         .execute(&self.pool)
         .await?

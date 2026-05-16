@@ -8,7 +8,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::AppState;
+use crate::{db::DEFAULT_CHANNEL, AppState};
 use super::{ApiError, ApiResult, packages::download_url};
 
 #[derive(Deserialize)]
@@ -18,6 +18,8 @@ pub struct SearchParams {
     limit: i64,
     #[serde(default)]
     offset: i64,
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 fn default_limit() -> i64 { 20 }
@@ -31,19 +33,21 @@ pub async fn search_packages(
         return Err(ApiError::too_many_requests());
     }
 
-    let query  = params.q.as_deref().unwrap_or("");
-    let limit  = params.limit.clamp(1, 100);
-    let offset = params.offset.max(0);
+    let query   = params.q.as_deref().unwrap_or("");
+    let limit   = params.limit.clamp(1, 100);
+    let offset  = params.offset.max(0);
+    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
 
-    let (results, total) = state.db.search_packages(query, limit, offset).await?;
+    let (results, total) = state.db.search_packages(query, channel, limit, offset).await?;
 
     let packages: Vec<Value> = results
         .into_iter()
         .filter_map(|(pkg, latest)| {
             let latest = latest?;
-            let url = download_url(&state.base_url, &pkg.name, &latest.version);
+            let url = download_url(&state.base_url, &pkg.name, &latest.version, channel);
             Some(json!({
                 "name":        pkg.name,
+                "channel":     pkg.channel,
                 "description": pkg.description,
                 "latest":      latest.version,
                 "downloads":   latest.downloads,

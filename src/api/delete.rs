@@ -6,20 +6,29 @@
 
 use std::sync::Arc;
 
-use axum::{extract::{Path, State}, Json};
+use axum::{extract::{Path, Query, State}, Json};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{auth::AdminToken, AppState};
+use crate::{auth::AdminToken, db::DEFAULT_CHANNEL, AppState};
 use super::{ApiError, ApiResult};
+
+#[derive(Deserialize)]
+pub struct ChannelParam {
+    #[serde(default)]
+    channel: Option<String>,
+}
 
 pub async fn delete_package(
     _auth: AdminToken,
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
+    Query(params): Query<ChannelParam>,
 ) -> ApiResult<Json<Value>> {
-    let found = state.db.delete_package(&name).await?;
+    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+    let found = state.db.delete_package(&name, channel).await?;
     if !found {
-        return Err(ApiError::not_found(format!("`{name}` not found")));
+        return Err(ApiError::not_found(format!("`{name}` not found in channel `{channel}`")));
     }
 
     // Best-effort: remove tarballs; log but don't fail if the directory is gone.
@@ -27,6 +36,6 @@ pub async fn delete_package(
         tracing::warn!(name, "failed to remove tarball directory: {e:#}");
     }
 
-    tracing::info!(name, "package hard-deleted by admin");
+    tracing::info!(name, channel, "package hard-deleted by admin");
     Ok(Json(json!({ "ok": true })))
 }

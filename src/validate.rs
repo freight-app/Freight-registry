@@ -39,6 +39,19 @@ fn validate_name_chars(name: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Validate a channel name: 1–32 ASCII alphanumeric / hyphen / underscore.
+pub fn channel_name(name: &str) -> Result<(), ApiError> {
+    if name.is_empty() || name.len() > 32 {
+        return Err(ApiError::bad_request("channel name must be 1–32 characters"));
+    }
+    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err(ApiError::bad_request(
+            "channel name may only contain ASCII letters, digits, hyphens, and underscores",
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a token scope string. Accepted values: `"read"`, `"publish"`, `"admin"`.
 pub fn token_scope(scope: &str) -> Result<(), ApiError> {
     match scope {

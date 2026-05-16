@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::net::SocketAddr;
 
-use crate::{auth::PublishToken, validate, AppState};
+use crate::{auth::PublishToken, db::DEFAULT_CHANNEL, validate, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -26,6 +26,9 @@ struct PublishMeta {
     #[serde(default)]
     #[allow(dead_code)]
     license: Option<String>,
+    /// Channel to publish to (default: "stable").
+    #[serde(default)]
+    channel: Option<String>,
 }
 
 pub async fn publish(
@@ -34,7 +37,6 @@ pub async fn publish(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
-    // Strict rate limit on publish
     if state.limiters.write.check_key(&addr.ip()).is_err() {
         return Err(ApiError::too_many_requests());
     }
@@ -42,33 +44,31 @@ pub async fn publish(
     let (meta, tarball) =
         parse_body(&body).map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    // Validate name and version
     validate::package_name(&meta.name)?;
     validate::version(&meta.vers)?;
 
-    // Ownership check: new package → anyone with a valid token can claim it;
-    // existing package → must be a registered owner.
-    match state.db.user_owns_package(auth.user.id, &meta.name).await? {
-        None => {}           // package doesn't exist yet; first publish claims it
-        Some(true) => {}     // user is an owner, proceed
+    let channel = meta.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+    validate::channel_name(channel)?;
+
+    match state.db.user_owns_package(auth.user.id, &meta.name, channel).await? {
+        None => {}
+        Some(true) => {}
         Some(false) => {
             return Err(ApiError::forbidden(format!(
-                "you are not an owner of `{}`", meta.name
+                "you are not an owner of `{}` in channel `{channel}`", meta.name
             )));
         }
     }
 
-    // Reject duplicate versions up-front (UNIQUE constraint is the backstop).
-    if let Some((_, versions)) = state.db.get_package(&meta.name).await? {
+    if let Some((_, versions)) = state.db.get_package(&meta.name, channel).await? {
         if versions.iter().any(|v| v.version == meta.vers) {
             return Err(ApiError::conflict(format!(
-                "`{}@{}` already exists",
+                "`{}@{}` already exists in channel `{channel}`",
                 meta.name, meta.vers
             )));
         }
     }
 
-    // Verify the payload is a valid gzip stream (magic bytes 0x1f 0x8b).
     if tarball.len() < 2 || tarball[0] != 0x1f || tarball[1] != 0x8b {
         return Err(ApiError::bad_request("tarball is not a valid gzip archive"));
     }
@@ -83,13 +83,13 @@ pub async fn publish(
 
     state
         .db
-        .publish_version(auth.user.id, &meta.name, meta.description.as_deref(), &meta.vers, &checksum)
+        .publish_version(auth.user.id, &meta.name, channel, meta.description.as_deref(), &meta.vers, &checksum)
         .await?;
 
     state.metrics.publishes_total.inc();
     let ip = addr.ip().to_string();
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
-    tracing::info!(user = %auth.user.username, "published {}@{}", meta.name, meta.vers);
+    tracing::info!(user = %auth.user.username, channel, "published {}@{}", meta.name, meta.vers);
 
     Ok(Json(json!({
         "ok": true,

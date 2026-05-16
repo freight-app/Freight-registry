@@ -1,5 +1,7 @@
 use freight_registry::db::Db;
 
+const STABLE: &str = "stable";
+
 async fn make_user(db: &Db, username: &str) -> i64 {
     db.create_user(username, None, "pw").await.unwrap()
 }
@@ -227,9 +229,10 @@ async fn token_list() {
 async fn publish_and_get() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", Some("a library"), "1.0.0", "abc123").await.unwrap();
-    let (pkg, versions) = db.get_package("mylib").await.unwrap().unwrap();
+    db.publish_version(uid, "mylib", STABLE, Some("a library"), "1.0.0", "abc123").await.unwrap();
+    let (pkg, versions) = db.get_package("mylib", STABLE).await.unwrap().unwrap();
     assert_eq!(pkg.name, "mylib");
+    assert_eq!(pkg.channel, STABLE);
     assert_eq!(pkg.description.as_deref(), Some("a library"));
     assert_eq!(versions.len(), 1);
     assert_eq!(versions[0].version, "1.0.0");
@@ -242,76 +245,88 @@ async fn publish_and_get() {
 async fn get_package_case_insensitive() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "MyLib", None, "1.0.0", "hash").await.unwrap();
-    assert!(db.get_package("mylib").await.unwrap().is_some());
-    assert!(db.get_package("MYLIB").await.unwrap().is_some());
+    db.publish_version(uid, "MyLib", STABLE, None, "1.0.0", "hash").await.unwrap();
+    assert!(db.get_package("mylib", STABLE).await.unwrap().is_some());
+    assert!(db.get_package("MYLIB", STABLE).await.unwrap().is_some());
 }
 
 #[tokio::test]
 async fn get_package_not_found() {
     let db = Db::open_memory().await.unwrap();
-    assert!(db.get_package("nothing").await.unwrap().is_none());
+    assert!(db.get_package("nothing", STABLE).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn publish_duplicate_version_fails() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "hash1").await.unwrap();
-    assert!(db.publish_version(uid, "mylib", None, "1.0.0", "hash2").await.is_err());
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "hash1").await.unwrap();
+    assert!(db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "hash2").await.is_err());
 }
 
 #[tokio::test]
 async fn publish_multiple_versions() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "h1").await.unwrap();
-    db.publish_version(uid, "mylib", None, "1.1.0", "h2").await.unwrap();
-    let (_, versions) = db.get_package("mylib").await.unwrap().unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, "1.1.0", "h2").await.unwrap();
+    let (_, versions) = db.get_package("mylib", STABLE).await.unwrap().unwrap();
     assert_eq!(versions.len(), 2);
+}
+
+#[tokio::test]
+async fn same_name_different_channels() {
+    let db = Db::open_memory().await.unwrap();
+    let uid = make_user(&db, "alice").await;
+    db.publish_version(uid, "mylib", "stable", None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "mylib", "experimental", None, "2.0.0", "h2").await.unwrap();
+    let (_, stable_vers) = db.get_package("mylib", "stable").await.unwrap().unwrap();
+    let (_, exp_vers) = db.get_package("mylib", "experimental").await.unwrap().unwrap();
+    assert_eq!(stable_vers[0].version, "1.0.0");
+    assert_eq!(exp_vers[0].version, "2.0.0");
 }
 
 #[tokio::test]
 async fn get_version() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "checksum1").await.unwrap();
-    let ver = db.get_version("mylib", "1.0.0").await.unwrap().unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "checksum1").await.unwrap();
+    let ver = db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap();
     assert_eq!(ver.checksum, "checksum1");
     assert_eq!(ver.yanked, 0);
-    assert!(db.get_version("mylib", "9.9.9").await.unwrap().is_none());
+    assert!(db.get_version("mylib", "9.9.9", STABLE).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn yank_and_unyank() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "hash").await.unwrap();
-    assert!(db.set_yanked("mylib", "1.0.0", true).await.unwrap());
-    assert_eq!(db.get_version("mylib", "1.0.0").await.unwrap().unwrap().yanked, 1);
-    assert!(db.set_yanked("mylib", "1.0.0", false).await.unwrap());
-    assert_eq!(db.get_version("mylib", "1.0.0").await.unwrap().unwrap().yanked, 0);
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "hash").await.unwrap();
+    assert!(db.set_yanked("mylib", "1.0.0", STABLE, true).await.unwrap());
+    assert_eq!(db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap().yanked, 1);
+    assert!(db.set_yanked("mylib", "1.0.0", STABLE, false).await.unwrap());
+    assert_eq!(db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap().yanked, 0);
 }
 
 #[tokio::test]
 async fn yank_nonexistent_returns_false() {
     let db = Db::open_memory().await.unwrap();
-    assert!(!db.set_yanked("ghost", "1.0.0", true).await.unwrap());
+    assert!(!db.set_yanked("ghost", "1.0.0", STABLE, true).await.unwrap());
 }
 
 #[tokio::test]
 async fn delete_package() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "hash").await.unwrap();
-    assert!(db.delete_package("mylib").await.unwrap());
-    assert!(db.get_package("mylib").await.unwrap().is_none());
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "hash").await.unwrap();
+    assert!(db.delete_package("mylib", STABLE).await.unwrap());
+    assert!(db.get_package("mylib", STABLE).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn delete_package_nonexistent_returns_false() {
     let db = Db::open_memory().await.unwrap();
-    assert!(!db.delete_package("nobody").await.unwrap());
+    assert!(!db.delete_package("nobody", STABLE).await.unwrap());
 }
 
 // ── Search ────────────────────────────────────────────────────────────────────
@@ -320,9 +335,9 @@ async fn delete_package_nonexistent_returns_false() {
 async fn search_basic() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "awesome-lib", None, "1.0.0", "h1").await.unwrap();
-    db.publish_version(uid, "boring-tool", None, "1.0.0", "h2").await.unwrap();
-    let (results, total) = db.search_packages("awesome", 20, 0).await.unwrap();
+    db.publish_version(uid, "awesome-lib", STABLE, None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "boring-tool", STABLE, None, "1.0.0", "h2").await.unwrap();
+    let (results, total) = db.search_packages("awesome", STABLE, 20, 0).await.unwrap();
     assert_eq!(total, 1);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0.name, "awesome-lib");
@@ -332,10 +347,10 @@ async fn search_basic() {
 async fn search_empty_query_returns_all() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "lib-a", None, "1.0.0", "h1").await.unwrap();
-    db.publish_version(uid, "lib-b", None, "1.0.0", "h2").await.unwrap();
-    db.publish_version(uid, "lib-c", None, "1.0.0", "h3").await.unwrap();
-    let (_, total) = db.search_packages("", 20, 0).await.unwrap();
+    db.publish_version(uid, "lib-a", STABLE, None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "lib-b", STABLE, None, "1.0.0", "h2").await.unwrap();
+    db.publish_version(uid, "lib-c", STABLE, None, "1.0.0", "h3").await.unwrap();
+    let (_, total) = db.search_packages("", STABLE, 20, 0).await.unwrap();
     assert_eq!(total, 3);
 }
 
@@ -344,14 +359,14 @@ async fn search_pagination() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
     for i in 0..5 {
-        db.publish_version(uid, &format!("pkg-{i}"), None, "1.0.0", &format!("h{i}"))
+        db.publish_version(uid, &format!("pkg-{i}"), STABLE, None, "1.0.0", &format!("h{i}"))
             .await
             .unwrap();
     }
-    let (page1, total) = db.search_packages("pkg", 2, 0).await.unwrap();
+    let (page1, total) = db.search_packages("pkg", STABLE, 2, 0).await.unwrap();
     assert_eq!(total, 5);
     assert_eq!(page1.len(), 2);
-    let (page3, _) = db.search_packages("pkg", 2, 4).await.unwrap();
+    let (page3, _) = db.search_packages("pkg", STABLE, 2, 4).await.unwrap();
     assert_eq!(page3.len(), 1);
 }
 
@@ -359,10 +374,24 @@ async fn search_pagination() {
 async fn search_excludes_packages_with_no_versions() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "has-version", None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "has-version", STABLE, None, "1.0.0", "h1").await.unwrap();
     // "no-version" never published → shouldn't appear
-    let (_, total) = db.search_packages("", 20, 0).await.unwrap();
+    let (_, total) = db.search_packages("", STABLE, 20, 0).await.unwrap();
     assert_eq!(total, 1);
+}
+
+#[tokio::test]
+async fn search_scoped_to_channel() {
+    let db = Db::open_memory().await.unwrap();
+    let uid = make_user(&db, "alice").await;
+    db.publish_version(uid, "mylib", "stable", None, "1.0.0", "h1").await.unwrap();
+    db.publish_version(uid, "mylib", "experimental", None, "2.0.0", "h2").await.unwrap();
+    let (stable_results, stable_total) = db.search_packages("mylib", "stable", 20, 0).await.unwrap();
+    assert_eq!(stable_total, 1);
+    assert_eq!(stable_results[0].0.channel, "stable");
+    let (exp_results, exp_total) = db.search_packages("mylib", "experimental", 20, 0).await.unwrap();
+    assert_eq!(exp_total, 1);
+    assert_eq!(exp_results[0].0.channel, "experimental");
 }
 
 // ── Ownership ─────────────────────────────────────────────────────────────────
@@ -371,8 +400,8 @@ async fn search_excludes_packages_with_no_versions() {
 async fn first_publisher_auto_owns() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "h").await.unwrap();
-    assert_eq!(db.user_owns_package(uid, "mylib").await.unwrap(), Some(true));
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "h").await.unwrap();
+    assert_eq!(db.user_owns_package(uid, "mylib", STABLE).await.unwrap(), Some(true));
 }
 
 #[tokio::test]
@@ -380,15 +409,15 @@ async fn non_owner_not_allowed() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let bob = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", None, "1.0.0", "h").await.unwrap();
-    assert_eq!(db.user_owns_package(bob, "mylib").await.unwrap(), Some(false));
+    db.publish_version(alice, "mylib", STABLE, None, "1.0.0", "h").await.unwrap();
+    assert_eq!(db.user_owns_package(bob, "mylib", STABLE).await.unwrap(), Some(false));
 }
 
 #[tokio::test]
 async fn nonexistent_package_returns_none() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    assert_eq!(db.user_owns_package(uid, "ghost").await.unwrap(), None);
+    assert_eq!(db.user_owns_package(uid, "ghost", STABLE).await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -396,11 +425,11 @@ async fn add_and_remove_owner() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let bob = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", None, "1.0.0", "h").await.unwrap();
-    assert!(db.add_package_owner("mylib", "bob").await.unwrap());
-    assert_eq!(db.user_owns_package(bob, "mylib").await.unwrap(), Some(true));
-    assert!(db.remove_package_owner("mylib", "bob").await.unwrap());
-    assert_eq!(db.user_owns_package(bob, "mylib").await.unwrap(), Some(false));
+    db.publish_version(alice, "mylib", STABLE, None, "1.0.0", "h").await.unwrap();
+    assert!(db.add_package_owner("mylib", STABLE, "bob").await.unwrap());
+    assert_eq!(db.user_owns_package(bob, "mylib", STABLE).await.unwrap(), Some(true));
+    assert!(db.remove_package_owner("mylib", STABLE, "bob").await.unwrap());
+    assert_eq!(db.user_owns_package(bob, "mylib", STABLE).await.unwrap(), Some(false));
 }
 
 #[tokio::test]
@@ -408,9 +437,9 @@ async fn get_package_owners() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let _ = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", None, "1.0.0", "h").await.unwrap();
-    db.add_package_owner("mylib", "bob").await.unwrap();
-    let owners = db.get_package_owners("mylib").await.unwrap();
+    db.publish_version(alice, "mylib", STABLE, None, "1.0.0", "h").await.unwrap();
+    db.add_package_owner("mylib", STABLE, "bob").await.unwrap();
+    let owners = db.get_package_owners("mylib", STABLE).await.unwrap();
     assert_eq!(owners.len(), 2);
     let names: Vec<_> = owners.iter().map(|u| u.username.as_str()).collect();
     assert!(names.contains(&"alice"));
@@ -423,12 +452,12 @@ async fn get_package_owners() {
 async fn download_count_increments() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", None, "1.0.0", "h").await.unwrap();
-    db.increment_downloads("mylib", "1.0.0");
-    db.increment_downloads("mylib", "1.0.0");
+    db.publish_version(uid, "mylib", STABLE, None, "1.0.0", "h").await.unwrap();
+    db.increment_downloads("mylib", "1.0.0", STABLE);
+    db.increment_downloads("mylib", "1.0.0", STABLE);
     // Give the spawned tasks time to complete.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let ver = db.get_version("mylib", "1.0.0").await.unwrap().unwrap();
+    let ver = db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap();
     assert_eq!(ver.downloads, 2);
 }
 

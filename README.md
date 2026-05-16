@@ -101,10 +101,10 @@ The raw token is printed once on `add` and never stored in plain text. Tokens ex
 
 ## Connecting a freight client
 
-Add a `[[registry]]` entry to `~/.freight/config.toml` (or your project's `.freight/config.toml`):
+Add a `[[registries]]` entry to `~/.freight/config.toml` (or your project's `.freight/config.toml`):
 
 ```toml
-[[registry]]
+[[registries]]
 name  = "myregistry"
 url   = "https://registry.example.com"
 token = "your-api-token-here"

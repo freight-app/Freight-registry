@@ -21,6 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use freight_registry::{
     api,
     auth::hash_password,
+    config,
     db::Db,
     metrics::Metrics,
     rate_limit::Limiters,
@@ -150,6 +151,12 @@ enum TokenCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load config file before clap parses, so file values appear as env vars
+    // that clap picks up (CLI flags and real env vars still take priority).
+    if let Some(path) = config::load() {
+        eprintln!("loaded config: {}", path.display());
+    }
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()

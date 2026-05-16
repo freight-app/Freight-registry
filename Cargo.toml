@@ -18,7 +18,7 @@ path = "src/tui/main.rs"
 required-features = ["tui"]
 
 [features]
-tui = ["dep:ratatui", "dep:crossterm", "dep:toml"]
+tui = ["dep:ratatui", "dep:crossterm"]
 
 [dependencies]
 axum               = "0.7"
@@ -42,7 +42,7 @@ governor           = { version = "0.6", features = ["dashmap"] }
 object_store       = { version = "0.11", features = ["aws"] }
 futures            = "0.3"
 prometheus-client  = "0.22"
-toml               = { version = "0.8", optional = true }
+toml               = "0.8"
 ratatui            = { version = "0.28", optional = true }
 crossterm          = { version = "0.28", optional = true }
 

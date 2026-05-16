@@ -62,25 +62,23 @@ pub fn token_scope(scope: &str) -> Result<(), ApiError> {
     }
 }
 
-/// Validate a version string — requires at least `major.minor` semver structure.
+/// Validate a version string.
+///
+/// Accepts semver (`1.2.3`), date versions (`2023-06-10`), four-part (`2026.02.23.00`),
+/// and any reasonable combination — the only hard rules are length and allowed characters.
 pub fn version(vers: &str) -> Result<(), ApiError> {
     if vers.is_empty() || vers.len() > 64 {
         return Err(ApiError::bad_request("version must be 1–64 characters"));
     }
-    // Strip pre-release and build metadata.
-    let core = vers.split(['-', '+']).next().unwrap_or("");
-    let parts: Vec<&str> = core.split('.').collect();
-    if parts.len() < 2 || parts.len() > 3 {
-        return Err(ApiError::bad_request(
-            "version must be semver: major.minor[.patch]",
-        ));
+    // Must start with a digit or letter and consist only of alphanumerics plus `.`, `-`, `+`, `_`.
+    let first = vers.as_bytes()[0];
+    if !first.is_ascii_alphanumeric() {
+        return Err(ApiError::bad_request("version must start with a letter or digit"));
     }
-    for part in &parts {
-        if part.parse::<u64>().is_err() {
-            return Err(ApiError::bad_request(format!(
-                "invalid version component `{part}` — must be a non-negative integer"
-            )));
-        }
+    if !vers.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+' | b'_')) {
+        return Err(ApiError::bad_request(
+            "version may only contain letters, digits, '.', '-', '+', and '_'",
+        ));
     }
     Ok(())
 }

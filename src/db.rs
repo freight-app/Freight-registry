@@ -160,6 +160,15 @@ impl Db {
     pub async fn open_url(url: &str) -> Result<Self> {
         sqlx::any::install_default_drivers();
         let is_postgres = url.starts_with("postgres://") || url.starts_with("postgresql://");
+        // Ensure SQLite files are opened in read-write-create mode even when
+        // the user omits the query param (e.g. bare `sqlite:///path/to/db`).
+        let owned;
+        let url = if !is_postgres && !url.contains('?') {
+            owned = format!("{url}?mode=rwc");
+            owned.as_str()
+        } else {
+            url
+        };
         let pool = AnyPool::connect(url).await?;
         if !is_postgres {
             sqlx::query("PRAGMA foreign_keys = ON").execute(&pool).await?;

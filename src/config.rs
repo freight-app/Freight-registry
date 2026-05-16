@@ -11,9 +11,8 @@
 //! Example config:
 //!
 //! ```toml
-//! # file: path to a local SQLite database
-//! # postgres: / postgresql:  connect to a remote PostgreSQL server
-//! url = "file:/var/lib/freight-registry/registry.db"
+//! # sqlite:// for a local file, postgres:// for a remote server
+//! url = "sqlite:///var/lib/freight-registry/registry.db"
 //! # url = "postgres://user:pass@db.internal/freight"
 //!
 //! [serve]
@@ -40,8 +39,8 @@ use serde::Deserialize;
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// Database URL. Prefix with `file:` for SQLite or use a full
-    /// `postgres://` / `postgresql://` URL for a remote server.
+    /// Database URL. Use `sqlite:///path/to/db` for a local file or
+    /// `postgres://user:pass@host/db` for a remote server.
     pub url:   Option<String>,
     pub data:  Option<String>,
     pub serve: Option<ServeConfig>,
@@ -124,20 +123,6 @@ fn user_config_path() -> Option<PathBuf> {
     Some(base.join("freight-registry/config.toml"))
 }
 
-/// Normalise a `url =` value to a sqlx-compatible `DATABASE_URL`.
-///
-/// `file:/path/to/db` → `sqlite:///path/to/db?mode=rwc`
-/// `postgres://...`    → passed through unchanged
-fn normalise_db_url(url: &str) -> String {
-    if let Some(rest) = url.strip_prefix("file:") {
-        // file:/absolute  → sqlite:///absolute
-        // file:relative   → sqlite://relative
-        format!("sqlite://{rest}?mode=rwc")
-    } else {
-        url.to_string()
-    }
-}
-
 /// Set an env var only if it is not already present in the environment.
 fn set_if_absent(key: &str, val: &str) {
     if std::env::var(key).is_err() {
@@ -147,7 +132,7 @@ fn set_if_absent(key: &str, val: &str) {
 }
 
 fn apply(cfg: Config) {
-    if let Some(v) = cfg.url  { set_if_absent("DATABASE_URL",     &normalise_db_url(&v)); }
+    if let Some(v) = cfg.url  { set_if_absent("DATABASE_URL", &v); }
     if let Some(v) = cfg.data { set_if_absent("FREIGHT_DATA_DIR", &v); }
 
     let Some(s) = cfg.serve else { return };

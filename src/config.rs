@@ -11,12 +11,14 @@
 //! Example config:
 //!
 //! ```toml
-//! data         = "/var/lib/freight-registry"
-//! database_url = "postgres://user:pass@db.internal/freight"
+//! # file: path to a local SQLite database
+//! # postgres: / postgresql:  connect to a remote PostgreSQL server
+//! url = "file:/var/lib/freight-registry/registry.db"
+//! # url = "postgres://user:pass@db.internal/freight"
 //!
 //! [serve]
+//! url               = "https://freight.example.com"
 //! bind              = "0.0.0.0:7878"
-//! base_url          = "https://freight.example.com"
 //! max_upload_mb     = 50
 //! mirror_upstream   = "https://freight.dev"
 //! rate_limit_read   = 120
@@ -38,16 +40,19 @@ use serde::Deserialize;
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    pub data:         Option<String>,
-    pub database_url: Option<String>,
-    pub serve:        Option<ServeConfig>,
+    /// Database URL. Prefix with `file:` for SQLite or use a full
+    /// `postgres://` / `postgresql://` URL for a remote server.
+    pub url:   Option<String>,
+    pub data:  Option<String>,
+    pub serve: Option<ServeConfig>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ServeConfig {
+    /// Public base URL of this registry (embedded in download links).
+    pub url:                Option<String>,
     pub bind:               Option<String>,
-    pub base_url:           Option<String>,
     pub max_upload_mb:      Option<u64>,
     pub mirror_upstream:    Option<String>,
     pub rate_limit_read:    Option<u32>,
@@ -92,18 +97,15 @@ pub fn load() -> Option<PathBuf> {
 }
 
 fn find_config_file() -> Option<PathBuf> {
-    // 1. Explicit override
     if let Ok(p) = std::env::var("FREIGHT_CONFIG") {
         return Some(PathBuf::from(p));
     }
 
-    // 2. System-wide
     let system = Path::new("/etc/freight-registry.toml");
     if system.exists() {
         return Some(system.to_path_buf());
     }
 
-    // 3. User config dir
     let user = user_config_path()?;
     if user.exists() {
         return Some(user);
@@ -122,22 +124,36 @@ fn user_config_path() -> Option<PathBuf> {
     Some(base.join("freight-registry/config.toml"))
 }
 
+/// Normalise a `url =` value to a sqlx-compatible `DATABASE_URL`.
+///
+/// `file:/path/to/db` → `sqlite:///path/to/db?mode=rwc`
+/// `postgres://...`    → passed through unchanged
+fn normalise_db_url(url: &str) -> String {
+    if let Some(rest) = url.strip_prefix("file:") {
+        // file:/absolute  → sqlite:///absolute
+        // file:relative   → sqlite://relative
+        format!("sqlite://{rest}?mode=rwc")
+    } else {
+        url.to_string()
+    }
+}
+
 /// Set an env var only if it is not already present in the environment.
 fn set_if_absent(key: &str, val: &str) {
     if std::env::var(key).is_err() {
-        // Safety: single-threaded at this point (before tokio runtime starts).
+        // Safety: single-threaded here — tokio runtime hasn't started yet.
         unsafe { std::env::set_var(key, val); }
     }
 }
 
 fn apply(cfg: Config) {
-    if let Some(v) = cfg.data         { set_if_absent("FREIGHT_DATA_DIR", &v); }
-    if let Some(v) = cfg.database_url { set_if_absent("DATABASE_URL",     &v); }
+    if let Some(v) = cfg.url  { set_if_absent("DATABASE_URL",     &normalise_db_url(&v)); }
+    if let Some(v) = cfg.data { set_if_absent("FREIGHT_DATA_DIR", &v); }
 
     let Some(s) = cfg.serve else { return };
 
+    if let Some(v) = s.url                { set_if_absent("FREIGHT_BASE_URL",          &v); }
     if let Some(v) = s.bind               { set_if_absent("FREIGHT_BIND",              &v); }
-    if let Some(v) = s.base_url           { set_if_absent("FREIGHT_BASE_URL",          &v); }
     if let Some(v) = s.max_upload_mb      { set_if_absent("FREIGHT_MAX_UPLOAD_MB",     &v.to_string()); }
     if let Some(v) = s.mirror_upstream    { set_if_absent("FREIGHT_MIRROR_UPSTREAM",   &v); }
     if let Some(v) = s.rate_limit_read    { set_if_absent("FREIGHT_RATE_LIMIT_READ",   &v.to_string()); }

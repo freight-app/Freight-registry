@@ -112,8 +112,9 @@ pub struct DbStats {
 
 #[derive(Clone)]
 pub struct Db {
-    pool:        AnyPool,
-    is_postgres: bool,
+    pool:         AnyPool,
+    #[allow(dead_code)]
+    is_postgres:  bool,
 }
 
 impl Db {

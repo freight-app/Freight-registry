@@ -59,12 +59,21 @@ fn package_name_reserved() {
 
 #[test]
 fn version_valid() {
+    // classic semver
     assert!(validate::version("1.0.0").is_ok());
     assert!(validate::version("1.0").is_ok());
     assert!(validate::version("0.1.0").is_ok());
     assert!(validate::version("1.0.0-alpha").is_ok());
     assert!(validate::version("1.0.0+build.1").is_ok());
     assert!(validate::version("1.0.0-alpha.1+build").is_ok());
+    // single component (allowed — vcpkg packages use e.g. "2")
+    assert!(validate::version("1").is_ok());
+    // four-part date version used by vcpkg
+    assert!(validate::version("2026.02.23.00").is_ok());
+    // ISO date version used by vcpkg
+    assert!(validate::version("2023-06-10").is_ok());
+    // letter-prefixed version
+    assert!(validate::version("v1.2.3").is_ok());
 }
 
 #[test]
@@ -73,19 +82,13 @@ fn version_empty() {
 }
 
 #[test]
-fn version_single_component() {
-    assert!(validate::version("1").is_err());
-}
-
-#[test]
-fn version_too_many_components() {
-    assert!(validate::version("1.2.3.4").is_err());
-}
-
-#[test]
 fn version_non_numeric() {
-    assert!(validate::version("a.b.c").is_err());
-    assert!(validate::version("1.x.0").is_err());
+    // must start with an alphanumeric character
+    assert!(validate::version(".1.0").is_err());
+    assert!(validate::version("-1.0").is_err());
+    // invalid characters
+    assert!(validate::version("1.0@bad").is_err());
+    assert!(validate::version("1.0 bad").is_err());
 }
 
 // ── username ──────────────────────────────────────────────────────────────────

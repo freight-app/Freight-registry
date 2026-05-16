@@ -20,6 +20,8 @@ pub struct VersionInfo {
     pub yanked:       bool,
     pub downloads:    i64,
     pub download_url: String,
+    #[serde(default)]
+    pub prebuilt_triples: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +72,19 @@ pub struct LoginResp {
     pub refresh_token: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrgSummary {
+    pub id:          i64,
+    pub name:        String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OrgMember {
+    pub username: String,
+    pub role:     String,
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -100,8 +115,6 @@ impl Client {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
     }
 
-    /// Encode a package name for use in a URL path segment.
-    /// Scoped names like `@acme/mylib` need the `/` encoded as `%2F`.
     fn encode_pkg(name: &str) -> String {
         name.replace('/', "%2F")
     }
@@ -143,7 +156,7 @@ impl Client {
     pub async fn me(&self) -> Result<(String, bool)> {
         let resp = self.auth(self.inner.get(self.url("/api/v1/me"))).send().await?;
         let body = Self::check(resp).await?;
-        let login   = body["login"].as_str().unwrap_or("").to_string();
+        let login    = body["login"].as_str().unwrap_or("").to_string();
         let is_admin = body["is_admin"].as_bool().unwrap_or(false);
         Ok((login, is_admin))
     }
@@ -233,9 +246,9 @@ impl Client {
     }
 
     pub async fn publish(&self, name: &str, vers: &str, tarball: Vec<u8>) -> Result<()> {
-        let meta      = serde_json::json!({"name": name, "vers": vers}).to_string();
+        let meta       = serde_json::json!({"name": name, "vers": vers}).to_string();
         let meta_bytes = meta.as_bytes();
-        let mut body  = Vec::new();
+        let mut body   = Vec::new();
         body.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
         body.extend_from_slice(meta_bytes);
         body.extend_from_slice(&(tarball.len() as u32).to_le_bytes());
@@ -247,10 +260,33 @@ impl Client {
             .send()
             .await?;
 
-        // 413 means body too large
         if resp.status() == StatusCode::PAYLOAD_TOO_LARGE {
             bail!("tarball exceeds server upload limit");
         }
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    // ── Owners ────────────────────────────────────────────────────────────────
+
+    pub async fn add_owner(&self, pkg: &str, username: &str) -> Result<()> {
+        let enc = Self::encode_pkg(pkg);
+        let resp = self
+            .auth(self.inner.put(self.url(&format!("/api/v1/packages/{enc}/owners"))))
+            .json(&json!({ "users": [username] }))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_owner(&self, pkg: &str, username: &str) -> Result<()> {
+        let enc = Self::encode_pkg(pkg);
+        let resp = self
+            .auth(self.inner.delete(self.url(&format!("/api/v1/packages/{enc}/owners"))))
+            .json(&json!({ "users": [username] }))
+            .send()
+            .await?;
         Self::check(resp).await?;
         Ok(())
     }
@@ -276,6 +312,66 @@ impl Client {
     pub async fn revoke_token(&self, name: &str) -> Result<()> {
         let resp = self
             .auth(self.inner.delete(self.url(&format!("/api/v1/me/tokens/{name}"))))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    // ── Orgs ──────────────────────────────────────────────────────────────────
+
+    pub async fn list_orgs(&self) -> Result<Vec<OrgSummary>> {
+        let resp = self.inner.get(self.url("/api/v1/orgs")).send().await?;
+        let body = Self::check(resp).await?;
+        Ok(serde_json::from_value(body["orgs"].clone()).unwrap_or_default())
+    }
+
+    pub async fn get_org(&self, name: &str) -> Result<(OrgSummary, Vec<OrgMember>)> {
+        let resp = self.inner.get(self.url(&format!("/api/v1/orgs/{name}"))).send().await?;
+        let body = Self::check(resp).await?;
+        let org = OrgSummary {
+            id:          body["id"].as_i64().unwrap_or(0),
+            name:        body["name"].as_str().unwrap_or(name).to_string(),
+            description: body["description"].as_str().map(str::to_string),
+        };
+        let members: Vec<OrgMember> =
+            serde_json::from_value(body["members"].clone()).unwrap_or_default();
+        Ok((org, members))
+    }
+
+    pub async fn create_org(&self, name: &str, description: &str) -> Result<()> {
+        let desc = if description.is_empty() { None } else { Some(description) };
+        let resp = self
+            .auth(self.inner.post(self.url("/api/v1/orgs")))
+            .json(&json!({ "name": name, "description": desc }))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn delete_org(&self, name: &str) -> Result<()> {
+        let resp = self
+            .auth(self.inner.delete(self.url(&format!("/api/v1/orgs/{name}"))))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn add_org_member(&self, org: &str, username: &str, role: &str) -> Result<()> {
+        let resp = self
+            .auth(self.inner.put(self.url(&format!("/api/v1/orgs/{org}/members"))))
+            .json(&json!({ "username": username, "role": role }))
+            .send()
+            .await?;
+        Self::check(resp).await?;
+        Ok(())
+    }
+
+    pub async fn remove_org_member(&self, org: &str, username: &str) -> Result<()> {
+        let resp = self
+            .auth(self.inner.delete(self.url(&format!("/api/v1/orgs/{org}/members/{username}"))))
             .send()
             .await?;
         Self::check(resp).await?;
@@ -322,7 +418,6 @@ impl Client {
     pub async fn list_audit(&self, filter: &str) -> Result<Vec<AuditEntry>> {
         let mut req = self.auth(self.inner.get(self.url("/api/v1/audit")));
         if !filter.is_empty() {
-            // Simple filter: "user:alice" or just an action keyword
             if let Some(uname) = filter.strip_prefix("user:") {
                 req = req.query(&[("user", uname)]);
             } else {

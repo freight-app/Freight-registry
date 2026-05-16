@@ -98,7 +98,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/me/tokens",                        get(my_tokens::list).post(my_tokens::create))
         .route("/api/v1/me/tokens/:name",                  delete(my_tokens::revoke))
         // Orgs
-        .route("/api/v1/orgs",                             axum::routing::post(orgs::create_org))
+        .route("/api/v1/orgs",                             get(orgs::list_orgs).post(orgs::create_org))
         .route("/api/v1/orgs/:name",                       get(orgs::get_org).delete(orgs::delete_org))
         .route("/api/v1/orgs/:name/members",               get(orgs::list_members).put(orgs::add_member))
         .route("/api/v1/orgs/:name/members/:username",     axum::routing::delete(orgs::remove_member))

@@ -10,13 +10,12 @@ use ratatui::{
 
 use super::app::{App, AppMode, Tab};
 
-const SELECTED_STYLE: Style = Style::new()
-    .fg(Color::Yellow)
-    .add_modifier(Modifier::BOLD);
-const DIM_STYLE: Style = Style::new().fg(Color::DarkGray);
-const OK_STYLE:  Style = Style::new().fg(Color::Green);
-const ERR_STYLE: Style = Style::new().fg(Color::Red);
-const HDR_STYLE: Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+const SELECTED_STYLE: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+const DIM_STYLE:      Style = Style::new().fg(Color::DarkGray);
+const OK_STYLE:       Style = Style::new().fg(Color::Green);
+const ERR_STYLE:      Style = Style::new().fg(Color::Red);
+const HDR_STYLE:      Style = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+const WARN_STYLE:     Style = Style::new().fg(Color::Yellow);
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     if matches!(app.mode, AppMode::Login) {
@@ -35,22 +34,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_body(frame, body_area, app);
     draw_status(frame, status_area, app);
 
-    // Overlays
-    if app.new_tok_value.is_some()  { draw_new_token(frame, area, app); }
-    if app.confirm.is_some()        { draw_confirm(frame, area, app); }
-    if app.publish.is_some()        { draw_publish_form(frame, area, app); }
-    if app.tok_create.is_some()     { draw_create_token_form(frame, area, app); }
+    // Overlays (highest priority last so they render on top)
+    if app.new_tok_value.is_some() { draw_new_token(frame, area, app); }
+    if app.confirm.is_some()       { draw_confirm(frame, area, app); }
+    if app.publish.is_some()       { draw_publish_form(frame, area, app); }
+    if app.tok_create.is_some()    { draw_create_token_form(frame, area, app); }
+    if app.org_create.is_some()    { draw_create_org_form(frame, area, app); }
+    if app.add_member.is_some()    { draw_add_member_form(frame, area, app); }
+    if app.add_owner.is_some()     { draw_add_owner_form(frame, area, app); }
 }
 
 // ── Tabs bar ──────────────────────────────────────────────────────────────────
 
 fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
-    let titles = vec!["1:Packages", "2:Users", "3:Tokens", "4:Audit"];
+    let titles = vec!["1:Packages", "2:Users", "3:Tokens", "4:Orgs", "5:Audit"];
     let tabs = Tabs::new(titles)
         .select(app.tab.index())
         .block(Block::default()
             .title(format!(
-                " freight-registry tui — {}{}",
+                " freight-registry — {}{}",
                 app.current_user,
                 if app.is_admin { " [admin]" } else { "" }
             ))
@@ -68,6 +70,7 @@ fn draw_body(frame: &mut Frame, area: Rect, app: &mut App) {
         Tab::Packages => draw_packages(frame, area, app),
         Tab::Users    => draw_users(frame, area, app),
         Tab::Tokens   => draw_tokens(frame, area, app),
+        Tab::Orgs     => draw_orgs(frame, area, app),
         Tab::Audit    => draw_audit(frame, area, app),
     }
 }
@@ -80,18 +83,15 @@ fn draw_packages(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Min(0),
     ]).areas(area);
 
-    // Search box
     let search_block = Block::default()
         .title(if app.pkg_search_on { " Search (Enter to run, Esc to cancel) " }
-               else { " / to search, r to refresh, P to publish " })
+               else { " / to search  r to refresh  P to publish " })
         .borders(Borders::ALL)
         .border_style(if app.pkg_search_on { Style::default().fg(Color::Yellow) }
                       else { Style::default() });
-    let search_text = Paragraph::new(app.pkg_search.as_str()).block(search_block);
-    frame.render_widget(search_text, search_area);
+    frame.render_widget(Paragraph::new(app.pkg_search.as_str()).block(search_block), search_area);
 
     if app.pkg_detail.is_some() {
-        // Split: left=list, right=detail
         let [left, right] = Layout::horizontal([
             Constraint::Percentage(35),
             Constraint::Percentage(65),
@@ -108,12 +108,11 @@ fn draw_package_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let items: Vec<ListItem> = app.packages.iter().map(|p| {
         let ver  = p.latest.as_deref().unwrap_or("?");
         let dl   = p.downloads;
-        let line = Line::from(vec![
+        ListItem::new(Line::from(vec![
             Span::raw(format!("{:<28}", &p.name)),
             Span::styled(format!(" {:<10}", ver), DIM_STYLE),
             Span::styled(format!(" ↓{dl}"), DIM_STYLE),
-        ]);
-        ListItem::new(line)
+        ]))
     }).collect();
 
     let list = List::new(items)
@@ -129,47 +128,48 @@ fn draw_package_list(frame: &mut Frame, area: Rect, app: &mut App) {
 fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
     let Some(detail) = &app.pkg_detail else { return };
 
-    // Reserve sparkline only if there are at least 2 versions with data
-    let has_spark = detail.versions.len() >= 2;
-    let spark_height = if has_spark { 3 } else { 0 };
+    let has_spark  = detail.versions.len() >= 2;
+    let spark_h    = if has_spark { 3 } else { 0 };
 
     let [info_area, ver_area, spark_area, hint_area] = Layout::vertical([
-        Constraint::Length(4),
+        Constraint::Length(5),
         Constraint::Min(4),
-        Constraint::Length(spark_height),
+        Constraint::Length(spark_h),
         Constraint::Length(1),
     ]).areas(area);
 
-    // Info block
-    let owners = detail.owners.join(", ");
-    let desc   = detail.description.as_deref().unwrap_or("—");
+    // Info block — name, description, owners
+    let owners_str = if detail.owners.is_empty() { "—".to_string() } else { detail.owners.join(", ") };
+    let desc       = detail.description.as_deref().unwrap_or("—");
     let info = Paragraph::new(vec![
         Line::from(vec![Span::styled("Name:  ", HDR_STYLE), Span::raw(&detail.name)]),
         Line::from(vec![Span::styled("Desc:  ", HDR_STYLE), Span::raw(desc)]),
-        Line::from(vec![Span::styled("Owners:", HDR_STYLE), Span::raw(format!(" {owners}"))]),
+        Line::from(vec![Span::styled("Owners:", HDR_STYLE), Span::raw(format!(" {owners_str}"))]),
     ])
     .block(Block::default().borders(Borders::ALL).title(" Detail "));
     frame.render_widget(info, info_area);
 
-    // Versions
+    // Versions list
     let items: Vec<ListItem> = detail.versions.iter().map(|v| {
-        let tag   = if v.yanked { Span::styled(" [yanked]", ERR_STYLE) }
-                    else        { Span::styled(" [active]", OK_STYLE) };
-        let line  = Line::from(vec![
+        let tag  = if v.yanked { Span::styled(" [yanked]", ERR_STYLE) }
+                   else        { Span::styled(" [active]", OK_STYLE) };
+        let pb   = if v.prebuilt_triples.is_empty() { String::new() }
+                   else { format!(" 📦{}", v.prebuilt_triples.len()) };
+        ListItem::new(Line::from(vec![
             Span::raw(format!("{:<14}", v.version)),
             Span::styled(format!("↓{:<8}", v.downloads), DIM_STYLE),
             tag,
-        ]);
-        ListItem::new(line)
+            Span::styled(pb, Style::default().fg(Color::Magenta)),
+        ]))
     }).collect();
 
     let ver_list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(" Versions (j/k, y=yank, u=unyank) "))
+        .block(Block::default().borders(Borders::ALL)
+            .title(" Versions (j/k  y=yank  u=unyank  📦=has prebuilts) "))
         .highlight_style(SELECTED_STYLE)
         .highlight_symbol("► ");
     frame.render_stateful_widget(ver_list, ver_area, &mut app.ver_state);
 
-    // Download sparkline (oldest → newest, versions are stored newest-first)
     if has_spark {
         let spark_data: Vec<u64> = detail.versions.iter().rev()
             .map(|v| v.downloads.max(0) as u64)
@@ -182,17 +182,17 @@ fn draw_package_detail(frame: &mut Frame, area: Rect, app: &mut App) {
         frame.render_widget(sparkline, spark_area);
     }
 
-    // Hints
-    let mut hints = vec![Span::raw(" [Esc] back  [y] yank  [u] unyank")];
-    if app.is_admin { hints.push(Span::styled("  [d] delete package", ERR_STYLE)); }
+    let mut hints = vec![
+        Span::raw(" [Esc] back  [y] yank  [u] unyank  [a] add owner  [O] remove owner"),
+    ];
+    if app.is_admin { hints.push(Span::styled("  [d] delete pkg", ERR_STYLE)); }
     frame.render_widget(Paragraph::new(Line::from(hints)), hint_area);
 }
 
 // ── Users tab ─────────────────────────────────────────────────────────────────
 
 fn draw_users(frame: &mut Frame, area: Rect, app: &mut App) {
-    let header = Row::new(["ID", "Username", "Email", "Admin"])
-        .style(HDR_STYLE);
+    let header = Row::new(["ID", "Username", "Email", "Admin"]).style(HDR_STYLE);
     let rows: Vec<Row> = app.users.iter().map(|u| {
         let admin = if u.is_admin { "✓" } else { "" };
         Row::new(vec![
@@ -204,7 +204,7 @@ fn draw_users(frame: &mut Frame, area: Rect, app: &mut App) {
     }).collect();
 
     let hint = if app.is_admin { " [p] promote  [d] demote  [x] remove  [r] refresh" }
-               else            { " [r] refresh (read-only — admin access required for mutations)" };
+               else            { " [r] refresh (admin access required for mutations)" };
 
     let [table_area, hint_area] = Layout::vertical([
         Constraint::Min(0),
@@ -230,8 +230,7 @@ fn draw_users(frame: &mut Frame, area: Rect, app: &mut App) {
 // ── Tokens tab ────────────────────────────────────────────────────────────────
 
 fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
-    let header = Row::new(["ID", "Name", "Kind", "Expires", "Last used"])
-        .style(HDR_STYLE);
+    let header = Row::new(["ID", "Name", "Scope", "Expires", "Last used"]).style(HDR_STYLE);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -247,9 +246,7 @@ fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
             if secs < 3600 { format!("{}m ago", secs / 60) }
             else           { format!("{}h ago", secs / 3600) }
         }).unwrap_or_else(|| "never".to_string());
-        Row::new(vec![
-            t.id.to_string(), t.name.clone(), t.kind.clone(), expires, last,
-        ])
+        Row::new(vec![t.id.to_string(), t.name.clone(), t.scope.clone(), expires, last])
     }).collect();
 
     let [table_area, hint_area] = Layout::vertical([
@@ -259,8 +256,8 @@ fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let table = Table::new(rows, [
         Constraint::Length(6),
-        Constraint::Length(24),
-        Constraint::Length(8),
+        Constraint::Length(22),
+        Constraint::Length(9),
         Constraint::Length(10),
         Constraint::Min(12),
     ])
@@ -277,6 +274,85 @@ fn draw_tokens(frame: &mut Frame, area: Rect, app: &mut App) {
     );
 }
 
+// ── Orgs tab ──────────────────────────────────────────────────────────────────
+
+fn draw_orgs(frame: &mut Frame, area: Rect, app: &mut App) {
+    let [body_area, hint_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ]).areas(area);
+
+    if app.org_detail.is_some() {
+        let [left, right] = Layout::horizontal([
+            Constraint::Percentage(35),
+            Constraint::Percentage(65),
+        ]).areas(body_area);
+        draw_org_list(frame, left, app);
+        draw_org_detail(frame, right, app);
+    } else {
+        draw_org_list(frame, body_area, app);
+    }
+
+    let hint = if app.org_detail.is_some() {
+        " [Esc] back  [a] add member  [x] remove member  [d] delete org  [r] refresh"
+    } else {
+        " [n] new org  [d] delete org  [r] refresh  [Enter/↑↓] select"
+    };
+    frame.render_widget(Paragraph::new(hint).style(DIM_STYLE), hint_area);
+}
+
+fn draw_org_list(frame: &mut Frame, area: Rect, app: &mut App) {
+    let loading_sfx = if app.loading { " (loading…)" } else { "" };
+    let items: Vec<ListItem> = app.orgs.iter().map(|o| {
+        let desc = o.description.as_deref().unwrap_or("");
+        ListItem::new(Line::from(vec![
+            Span::raw(format!("{:<24}", &o.name)),
+            Span::styled(format!(" {}", desc), DIM_STYLE),
+        ]))
+    }).collect();
+
+    let list = List::new(items)
+        .block(Block::default()
+            .title(format!(" Organizations ({}){} ", app.orgs.len(), loading_sfx))
+            .borders(Borders::ALL))
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol("► ");
+
+    frame.render_stateful_widget(list, area, &mut app.org_state);
+}
+
+fn draw_org_detail(frame: &mut Frame, area: Rect, app: &mut App) {
+    let Some(org) = &app.org_detail else { return };
+
+    let [info_area, members_area] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Min(0),
+    ]).areas(area);
+
+    let desc = org.description.as_deref().unwrap_or("—");
+    let info = Paragraph::new(vec![
+        Line::from(vec![Span::styled("Name: ", HDR_STYLE), Span::raw(&org.name)]),
+        Line::from(vec![Span::styled("Desc: ", HDR_STYLE), Span::raw(desc)]),
+    ])
+    .block(Block::default().borders(Borders::ALL).title(" Org "));
+    frame.render_widget(info, info_area);
+
+    let header = Row::new(["Username", "Role"]).style(HDR_STYLE);
+    let rows: Vec<Row> = app.org_members.iter().map(|m| {
+        let role_style = if m.role == "owner" { WARN_STYLE } else { Style::default() };
+        Row::new(vec![m.username.clone(), m.role.clone()]).style(role_style)
+    }).collect();
+
+    let table = Table::new(rows, [Constraint::Min(20), Constraint::Length(8)])
+        .header(header)
+        .block(Block::default().borders(Borders::ALL)
+            .title(format!(" Members ({}) ", app.org_members.len())))
+        .highlight_style(SELECTED_STYLE)
+        .highlight_symbol("► ");
+
+    frame.render_stateful_widget(table, members_area, &mut app.org_mem_state);
+}
+
 // ── Audit tab ─────────────────────────────────────────────────────────────────
 
 fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -286,10 +362,9 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(1),
     ]).areas(area);
 
-    // Filter box
     let filter_block = Block::default()
         .title(if app.aud_filter_on { " Filter (user:name or action, Enter/Esc to apply) " }
-               else { " / to filter, r to refresh " })
+               else { " / to filter  r to refresh " })
         .borders(Borders::ALL)
         .border_style(if app.aud_filter_on { Style::default().fg(Color::Yellow) }
                       else { Style::default() });
@@ -298,7 +373,6 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
         filter_area,
     );
 
-    // Table
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -308,9 +382,9 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
         .style(HDR_STYLE);
 
     let rows: Vec<Row> = app.audit.iter().map(|e| {
-        let age   = now - e.created_at;
-        let time  = if age < 3600 { format!("{}m ago", age / 60) }
-                    else { format!("{}h ago", age / 3600) };
+        let age  = now - e.created_at;
+        let time = if age < 3600 { format!("{}m ago", age / 60) }
+                   else          { format!("{}h ago", age / 3600) };
         Row::new(vec![
             time,
             e.username.clone().unwrap_or_else(|| "—".into()),
@@ -324,7 +398,7 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
     let table = Table::new(rows, [
         Constraint::Length(10),
         Constraint::Length(16),
-        Constraint::Length(10),
+        Constraint::Length(18),
         Constraint::Length(20),
         Constraint::Length(10),
         Constraint::Min(12),
@@ -336,7 +410,7 @@ fn draw_audit(frame: &mut Frame, area: Rect, app: &mut App) {
     .highlight_symbol("► ");
 
     frame.render_stateful_widget(table, table_area, &mut app.aud_state);
-    frame.render_widget(Paragraph::new(" j/k or ↑↓ to scroll"), hint_area);
+    frame.render_widget(Paragraph::new(" j/k or ↑↓ to scroll").style(DIM_STYLE), hint_area);
 }
 
 // ── Status bar ────────────────────────────────────────────────────────────────
@@ -361,7 +435,6 @@ fn draw_login(frame: &mut Frame, app: &App) {
         .title(" freight-registry — login ")
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::Cyan));
-
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -405,8 +478,7 @@ fn draw_login(frame: &mut Frame, app: &App) {
         );
     }
     frame.render_widget(
-        Paragraph::new(" Tab/↑↓ move  Enter login  Esc quit")
-            .style(DIM_STYLE),
+        Paragraph::new(" Tab/↑↓ move  Enter login  Esc quit").style(DIM_STYLE),
         hint_a,
     );
 }
@@ -422,7 +494,6 @@ fn draw_confirm(frame: &mut Frame, area: Rect, app: &App) {
         .title(" Confirm ")
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::Yellow));
-
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
@@ -483,11 +554,12 @@ fn draw_publish_form(frame: &mut Frame, area: Rect, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(form.path.as_str())
-            .block(Block::default().title(" Path to .tar.gz (Enter to publish) ").borders(Borders::ALL).border_style(fs(2))),
+            .block(Block::default().title(" Path to .tar.gz (Enter to publish) ").borders(Borders::ALL)
+                .border_style(fs(2))),
         pa,
     );
     frame.render_widget(
-        Paragraph::new(" Tab/↑↓ move fields  Enter on path to publish  Esc cancel")
+        Paragraph::new(" Tab/↑↓ move fields  Enter on path field to publish  Esc cancel")
             .style(DIM_STYLE),
         ha,
     );
@@ -497,7 +569,7 @@ fn draw_publish_form(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
     let Some(form) = &app.tok_create else { return };
-    let popup = center_rect(48, 7, area);
+    let popup = center_rect(48, 10, area);
     frame.render_widget(Clear, popup);
 
     let block = Block::default()
@@ -507,7 +579,8 @@ fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let [name_a, _, hint_a] = Layout::vertical([
+    let [name_a, scope_a, _, hint_a] = Layout::vertical([
+        Constraint::Length(3),
         Constraint::Length(3),
         Constraint::Length(1),
         Constraint::Length(1),
@@ -519,8 +592,141 @@ fn draw_create_token_form(frame: &mut Frame, area: Rect, app: &App) {
                 .border_style(Style::default().fg(Color::Yellow))),
         name_a,
     );
+
+    let scope_label = format!(
+        " ◄ {} ► (Tab to cycle)",
+        form.scope_str()
+    );
+    let scope_colour = match form.scope {
+        0 => Color::Blue,
+        2 => Color::Red,
+        _ => Color::Green,
+    };
     frame.render_widget(
-        Paragraph::new(" Enter to create  Esc to cancel").style(DIM_STYLE),
+        Paragraph::new(scope_label)
+            .style(Style::default().fg(scope_colour))
+            .block(Block::default().title(" Scope ").borders(Borders::ALL)),
+        scope_a,
+    );
+
+    frame.render_widget(
+        Paragraph::new(" Enter to create  Tab=cycle scope  Esc cancel").style(DIM_STYLE),
+        hint_a,
+    );
+}
+
+// ── Create org form ───────────────────────────────────────────────────────────
+
+fn draw_create_org_form(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(form) = &app.org_create else { return };
+    let popup = center_rect(52, 12, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" New Organization ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let [na, da, _, ha] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ]).areas(inner);
+
+    let fs = |idx: usize| if form.field == idx { Style::default().fg(Color::Yellow) }
+                          else { Style::default() };
+
+    frame.render_widget(
+        Paragraph::new(form.name.as_str())
+            .block(Block::default().title(" Name ").borders(Borders::ALL).border_style(fs(0))),
+        na,
+    );
+    frame.render_widget(
+        Paragraph::new(form.description.as_str())
+            .block(Block::default().title(" Description (optional) ").borders(Borders::ALL)
+                .border_style(fs(1))),
+        da,
+    );
+    frame.render_widget(
+        Paragraph::new(" Tab/↑↓ move  Enter to create  Esc cancel").style(DIM_STYLE),
+        ha,
+    );
+}
+
+// ── Add member form ───────────────────────────────────────────────────────────
+
+fn draw_add_member_form(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(form) = &app.add_member else { return };
+    let popup = center_rect(48, 10, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(format!(" Add Member to '{}' ", form.org))
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let [usr_a, role_a, _, hint_a] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ]).areas(inner);
+
+    frame.render_widget(
+        Paragraph::new(form.username.as_str())
+            .block(Block::default().title(" Username ").borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))),
+        usr_a,
+    );
+
+    let role_label = format!(" ◄ {} ► (Tab to toggle)", form.role_str());
+    let role_colour = if form.role == 1 { Color::Yellow } else { Color::Green };
+    frame.render_widget(
+        Paragraph::new(role_label)
+            .style(Style::default().fg(role_colour))
+            .block(Block::default().title(" Role ").borders(Borders::ALL)),
+        role_a,
+    );
+
+    frame.render_widget(
+        Paragraph::new(" Enter to add  Tab=toggle role  Esc cancel").style(DIM_STYLE),
+        hint_a,
+    );
+}
+
+// ── Add owner form ────────────────────────────────────────────────────────────
+
+fn draw_add_owner_form(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(form) = &app.add_owner else { return };
+    let popup = center_rect(48, 7, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(format!(" Add Owner to '{}' ", form.pkg))
+        .borders(Borders::ALL)
+        .style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let [usr_a, _, hint_a] = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ]).areas(inner);
+
+    frame.render_widget(
+        Paragraph::new(form.username.as_str())
+            .block(Block::default().title(" Username ").borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow))),
+        usr_a,
+    );
+    frame.render_widget(
+        Paragraph::new(" Enter to add  Esc cancel").style(DIM_STYLE),
         hint_a,
     );
 }

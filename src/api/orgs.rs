@@ -27,6 +27,18 @@ pub struct MemberBody {
 
 fn default_role() -> String { "member".to_string() }
 
+pub async fn list_orgs(
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<Value>> {
+    let orgs = state.db.list_orgs().await?;
+    let list: Vec<Value> = orgs.iter().map(|o| json!({
+        "id":          o.id,
+        "name":        o.name,
+        "description": o.description,
+    })).collect();
+    Ok(Json(json!({ "orgs": list })))
+}
+
 pub async fn create_org(
     State(state): State<Arc<AppState>>,
     auth: AuthToken,

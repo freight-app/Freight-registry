@@ -61,10 +61,11 @@ pub const DEFAULT_CHANNEL: &str = "stable";
 
 #[derive(FromRow)]
 pub struct VersionRow {
-    pub version:   String,
-    pub checksum:  String,
-    pub yanked:    i64,
-    pub downloads: i64,
+    pub version:      String,
+    pub checksum:     String,
+    pub yanked:       i64,
+    pub downloads:    i64,
+    pub dependencies: String, // JSON object: {"name": "version", ...}
 }
 
 #[derive(FromRow)]
@@ -483,7 +484,7 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let versions: Vec<VersionRow> = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads FROM versions
+            "SELECT version, checksum, yanked, downloads, dependencies FROM versions
              WHERE package_id = ? ORDER BY created_at DESC",
         )
         .bind(pkg.id)
@@ -496,7 +497,7 @@ impl Db {
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads FROM versions
+            "SELECT version, checksum, yanked, downloads, dependencies FROM versions
              WHERE version = ?
                AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
         )
@@ -574,7 +575,7 @@ impl Db {
         let mut results = Vec::with_capacity(pkgs.len());
         for pkg in pkgs {
             let latest: Option<VersionRow> = sqlx::query_as(
-                "SELECT version, checksum, yanked, downloads FROM versions
+                "SELECT version, checksum, yanked, downloads, dependencies FROM versions
                  WHERE package_id = ? AND yanked = 0 ORDER BY created_at DESC LIMIT 1",
             )
             .bind(pkg.id)
@@ -594,6 +595,7 @@ impl Db {
         description: Option<&str>,
         version: &str,
         checksum: &str,
+        dependencies: &str,
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO packages (name, channel, description) VALUES (?, ?, ?)
@@ -614,11 +616,12 @@ impl Db {
         .await?;
 
         sqlx::query(
-            "INSERT INTO versions (package_id, version, checksum) VALUES (?, ?, ?)",
+            "INSERT INTO versions (package_id, version, checksum, dependencies) VALUES (?, ?, ?, ?)",
         )
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
+        .bind(dependencies)
         .execute(&self.pool)
         .await?;
 

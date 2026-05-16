@@ -44,6 +44,8 @@ object_store       = { version = "0.11", features = ["aws"] }
 futures            = "0.3"
 prometheus-client  = "0.22"
 toml               = "0.8"
+flate2             = "1"
+tar                = "0.4"
 ratatui            = { version = "0.28", optional = true }
 crossterm          = { version = "0.28", optional = true }
 

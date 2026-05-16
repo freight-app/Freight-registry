@@ -6,6 +6,7 @@
 //!   [u32 LE: tarball length]
 //!   [tarball bytes]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{body::Bytes, extract::{ConnectInfo, State}, Json};
@@ -74,6 +75,7 @@ pub async fn publish(
     }
 
     let checksum = hex::encode(Sha256::digest(tarball));
+    let dependencies = extract_dependencies(tarball);
 
     state
         .storage
@@ -83,7 +85,7 @@ pub async fn publish(
 
     state
         .db
-        .publish_version(auth.user.id, &meta.name, channel, meta.description.as_deref(), &meta.vers, &checksum)
+        .publish_version(auth.user.id, &meta.name, channel, meta.description.as_deref(), &meta.vers, &checksum, &dependencies)
         .await?;
 
     state.metrics.publishes_total.inc();
@@ -95,6 +97,54 @@ pub async fn publish(
         "ok": true,
         "warnings": { "invalid_categories": [], "invalid_badges": [], "other": [] }
     })))
+}
+
+/// Extract `[dependencies]` from `freight.toml` inside the tarball.
+/// Returns a JSON object string, e.g. `{"zlib":"*","openssl":"*"}`.
+/// Returns `"{}"` on any error (missing file, parse failure, etc.).
+fn extract_dependencies(tarball: &[u8]) -> String {
+    let deps = extract_dependencies_inner(tarball).unwrap_or_default();
+    serde_json::to_string(&deps).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn extract_dependencies_inner(tarball: &[u8]) -> Option<HashMap<String, String>> {
+    use flate2::read::GzDecoder;
+    use tar::Archive;
+
+    let gz = GzDecoder::new(tarball);
+    let mut ar = Archive::new(gz);
+
+    for entry in ar.entries().ok()? {
+        let mut entry = entry.ok()?;
+        let path = entry.path().ok()?;
+        let file_name = path.file_name()?.to_string_lossy().into_owned();
+        if file_name != "freight.toml" { continue; }
+
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut content).ok()?;
+
+        #[derive(serde::Deserialize)]
+        struct Manifest {
+            #[serde(default)]
+            dependencies: HashMap<String, toml::Value>,
+        }
+        let manifest: Manifest = toml::from_str(&content).ok()?;
+        let deps = manifest.dependencies.into_iter()
+            .filter_map(|(k, v)| {
+                let ver = match v {
+                    toml::Value::String(s) => s,
+                    toml::Value::Table(t) => t.get("version")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("*")
+                        .to_string(),
+                    _ => "*".to_string(),
+                };
+                Some((k, ver))
+            })
+            .collect();
+        return Some(deps);
+    }
+    None
 }
 
 fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {

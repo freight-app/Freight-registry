@@ -49,6 +49,7 @@ async fn get_package_local(
         let prebuilts = state.db.list_prebuilts(&pkg.name, channel, &v.version).await
             .unwrap_or_default();
         let prebuilt_triples: Vec<&str> = prebuilts.iter().map(|p| p.triple.as_str()).collect();
+        let deps: serde_json::Value = serde_json::from_str(&v.dependencies).unwrap_or(json!({}));
         versions_json.push(json!({
             "version":         v.version,
             "checksum":        v.checksum,
@@ -56,6 +57,7 @@ async fn get_package_local(
             "yanked":          v.yanked != 0,
             "downloads":       v.downloads,
             "prebuilt_triples": prebuilt_triples,
+            "dependencies":    deps,
         }));
     }
 

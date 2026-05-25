@@ -5,6 +5,12 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 ## Open
 
 - [ ] **A6 · S** **CSP header** — Content-Security-Policy once any HTML pages are served directly
+- [ ] **E1 · S** **Real SMTP delivery** — Email verification tokens and password-reset links are currently logged to stdout via `tracing::warn!` (no SMTP). Add an optional `[smtp]` config block; fall back to stdout logging when absent. Consider a `trait Mailer` abstraction for testability.
+- [ ] **E2 · S** **TOTP recovery codes** — If a user loses their TOTP device there is no recovery path. Generate a set of single-use backup codes at enrolment time; store their SHA-256 hashes in the DB.
+- [ ] **E3 · S** **Org role enforcement** — Members have a `role` column (`"member"` / `"owner"`) but it is not enforced. Gate destructive org operations (delete, remove members, set_package_org) on `"owner"` role.
+- [ ] **E4 · S** **Org-scoped tokens** — Tokens are user-scoped. Add optional `org_id` binding so CI tokens can't publish outside their org.
+- [ ] **E5 · S** **Prebuilt blob GC** — Blobs for yanked versions are never deleted. Add a `freight-registry gc` subcommand.
+- [ ] **T1 · B** **Integration test suite** — Full publish → download → yank flow against an in-memory SQLite DB (`Db::open(":memory:")`); TOTP enforcement; org role gating.
 - [ ] **P8 · B** **Server-side prebuilt builds** — on source publish, queue Docker-based build jobs for each configured triple (`--build-triples x86_64-linux-gnu,aarch64-linux-gnu,x86_64-windows-gnu`); use **[Bollard](https://github.com/fussybeaver/bollard)** (Rust Docker API library) to drive the daemon directly — pull build image, create container with source bind-mount + output volume, stream logs, wait for exit; ClamAV scans output in a second container on the same volume before storing; results and live log streaming exposed via `GET /api/v1/packages/:name/:version/builds` and `GET /api/v1/packages/:name/:version/builds/:id/logs`; Linux/cross targets use `cross-rs` images; Windows targets use Windows Server Core Docker images; macOS cannot run in Docker legally so client-uploaded prebuilts remain the escape hatch for Apple targets
 
 ## Done

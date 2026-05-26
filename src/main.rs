@@ -89,6 +89,9 @@ enum Command {
         /// Upstream registry to proxy unknown packages from (e.g. https://freight.dev)
         #[arg(long, env = "FREIGHT_MIRROR_UPSTREAM")]
         mirror_upstream: Option<String>,
+        /// Maximum number of packages a non-admin user may own (omit for no limit)
+        #[arg(long, env = "FREIGHT_MAX_PACKAGES_PER_USER")]
+        max_packages_per_user: Option<u32>,
     },
     /// Manage user accounts
     User {
@@ -180,7 +183,7 @@ async fn main() -> Result<()> {
             bind, base_url, max_upload_mb, audit_log_ttl_days,
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
-            mirror_upstream,
+            mirror_upstream, max_packages_per_user,
         } => {
             let storage = match s3_bucket {
                 Some(ref bucket) => {
@@ -201,13 +204,18 @@ async fn main() -> Result<()> {
                 tracing::info!("mirror upstream: {upstream}");
             }
 
+            if let Some(limit) = max_packages_per_user {
+                tracing::info!("max packages per non-admin user: {limit}");
+            }
+
             let state = Arc::new(AppState {
                 db,
                 storage,
-                base_url:        base_url.trim_end_matches('/').to_string(),
-                limiters:        Limiters::new(rate_limit_read, rate_limit_write),
-                metrics:         Metrics::new(),
-                mirror_upstream: mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
+                base_url:             base_url.trim_end_matches('/').to_string(),
+                limiters:             Limiters::new(rate_limit_read, rate_limit_write),
+                metrics:              Metrics::new(),
+                mirror_upstream:      mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
+                max_packages_per_user,
             });
 
             // Spawn audit log pruning task if a TTL was configured.

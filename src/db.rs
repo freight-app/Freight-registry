@@ -681,6 +681,17 @@ impl Db {
 
     // ── Ownership ──────────────────────────────────────────────────────────────
 
+    /// Count the number of distinct packages owned by `user_id` across all channels.
+    pub async fn count_owned_packages(&self, user_id: i64) -> Result<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM package_owners WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
+    }
+
     /// Returns `None` when the package doesn't exist, `Some(bool)` otherwise.
     pub async fn user_owns_package(
         &self,

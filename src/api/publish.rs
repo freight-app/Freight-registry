@@ -58,7 +58,21 @@ pub async fn publish(
     validate::channel_name(channel)?;
 
     match state.db.user_owns_package(auth.user.id, &meta.name, channel).await? {
-        None => {}
+        None => {
+            // Package doesn't exist yet — this will be a new package.
+            // Enforce the per-user limit for non-admins.
+            if auth.user.is_admin == 0 {
+                if let Some(limit) = state.max_packages_per_user {
+                    let owned = state.db.count_owned_packages(auth.user.id).await?;
+                    if owned >= limit as i64 {
+                        return Err(ApiError::forbidden(format!(
+                            "package limit reached: you own {owned} package(s) \
+                             (max {limit} per user)"
+                        )));
+                    }
+                }
+            }
+        }
         Some(true) => {}
         Some(false) => {
             return Err(ApiError::forbidden(format!(

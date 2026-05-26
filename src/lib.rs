@@ -21,4 +21,7 @@ pub struct AppState {
     pub metrics:         Metrics,
     /// Base URL of an upstream registry to proxy unknown packages from.
     pub mirror_upstream: Option<String>,
+    /// Maximum number of packages a non-admin user may own simultaneously.
+    /// `None` means no limit. Admins are always exempt.
+    pub max_packages_per_user: Option<u32>,
 }

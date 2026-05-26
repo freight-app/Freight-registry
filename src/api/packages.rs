@@ -12,6 +12,37 @@ use reqwest;
 use crate::{db::DEFAULT_CHANNEL, AppState};
 use super::{ApiError, ApiResult};
 
+/// Compare two version strings heuristically:
+/// split on `.`, `-`, `_`; compare segments numerically where possible,
+/// lexicographically otherwise.  This correctly orders vcpkg date versions
+/// (e.g. `20260107.1` > `2019_01_30-1`) as well as typical semver
+/// (e.g. `1.10.0` > `1.9.0`).
+fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
+    let ta: Vec<&str> = a.split(['.', '-', '_']).collect();
+    let tb: Vec<&str> = b.split(['.', '-', '_']).collect();
+    for (sa, sb) in ta.iter().zip(tb.iter()) {
+        let ord = match (sa.parse::<u64>(), sb.parse::<u64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => sa.cmp(sb),
+        };
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    ta.len().cmp(&tb.len())
+}
+
+/// Pick the "best" (highest) non-yanked version from a list already returned
+/// from the DB (any order).  Falls back to the first version if all are yanked.
+fn best_version<'a>(versions: &'a [crate::db::VersionRow]) -> Option<&'a str> {
+    versions
+        .iter()
+        .filter(|v| v.yanked == 0)
+        .max_by(|a, b| cmp_version(&a.version, &b.version))
+        .or_else(|| versions.first())
+        .map(|v| v.version.as_str())
+}
+
 /// Proxy a GET request to `url` and return parsed JSON, or `None` on 404.
 async fn proxy_get_json(url: &str) -> Option<serde_json::Value> {
     let resp = reqwest::get(url).await.ok()?;
@@ -36,12 +67,7 @@ async fn get_package_local(
         .await?
         .ok_or_else(|| ApiError::not_found(format!("`{name}` not found in channel `{channel}`")))?;
 
-    let latest = versions
-        .iter()
-        .find(|v| v.yanked == 0)
-        .or_else(|| versions.first())
-        .map(|v| v.version.as_str())
-        .unwrap_or("");
+    let latest = best_version(&versions).unwrap_or("");
 
     let mut versions_json: Vec<Value> = Vec::new();
     for v in &versions {

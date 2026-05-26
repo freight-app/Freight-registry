@@ -582,7 +582,7 @@ impl Db {
             let latest: Option<VersionRow> = sqlx::query_as(
                 "SELECT version, checksum, yanked, downloads, dependencies,
                         upstream_url, build_system FROM versions
-                 WHERE package_id = ? AND yanked = 0 ORDER BY created_at DESC LIMIT 1",
+                 WHERE package_id = ? AND yanked = 0 ORDER BY version DESC LIMIT 1",
             )
             .bind(pkg.id)
             .fetch_optional(&self.pool)

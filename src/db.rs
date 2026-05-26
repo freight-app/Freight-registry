@@ -65,7 +65,9 @@ pub struct VersionRow {
     pub checksum:     String,
     pub yanked:       i64,
     pub downloads:    i64,
-    pub dependencies: String, // JSON object: {"name": "version", ...}
+    pub dependencies: String,        // JSON object: {"name": "version", ...}
+    pub upstream_url: Option<String>, // upstream source archive URL (metadata-only packages)
+    pub build_system: Option<String>, // e.g. "cmake", "make", "meson"
 }
 
 #[derive(FromRow)]
@@ -484,7 +486,8 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let versions: Vec<VersionRow> = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads, dependencies FROM versions
+            "SELECT version, checksum, yanked, downloads, dependencies,
+                    upstream_url, build_system FROM versions
              WHERE package_id = ? ORDER BY created_at DESC",
         )
         .bind(pkg.id)
@@ -497,7 +500,8 @@ impl Db {
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads, dependencies FROM versions
+            "SELECT version, checksum, yanked, downloads, dependencies,
+                    upstream_url, build_system FROM versions
              WHERE version = ?
                AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
         )
@@ -575,7 +579,8 @@ impl Db {
         let mut results = Vec::with_capacity(pkgs.len());
         for pkg in pkgs {
             let latest: Option<VersionRow> = sqlx::query_as(
-                "SELECT version, checksum, yanked, downloads, dependencies FROM versions
+                "SELECT version, checksum, yanked, downloads, dependencies,
+                        upstream_url, build_system FROM versions
                  WHERE package_id = ? AND yanked = 0 ORDER BY created_at DESC LIMIT 1",
             )
             .bind(pkg.id)
@@ -587,6 +592,10 @@ impl Db {
     }
 
     /// Publish a new version. Grants ownership to `user_id` if the package is new.
+    ///
+    /// `upstream_url` — when set, marks this as a "metadata-only" entry: no tarball is
+    /// stored on the server and `/download` returns a 302 redirect to this URL.
+    /// `build_system` — the foreign build system needed to compile the package (e.g. "cmake").
     pub async fn publish_version(
         &self,
         user_id: i64,
@@ -596,6 +605,8 @@ impl Db {
         version: &str,
         checksum: &str,
         dependencies: &str,
+        upstream_url: Option<&str>,
+        build_system: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO packages (name, channel, description) VALUES (?, ?, ?)
@@ -616,12 +627,15 @@ impl Db {
         .await?;
 
         sqlx::query(
-            "INSERT INTO versions (package_id, version, checksum, dependencies) VALUES (?, ?, ?, ?)",
+            "INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
         .bind(dependencies)
+        .bind(upstream_url)
+        .bind(build_system)
         .execute(&self.pool)
         .await?;
 

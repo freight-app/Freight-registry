@@ -50,10 +50,15 @@ async fn get_package_local(
             .unwrap_or_default();
         let prebuilt_triples: Vec<&str> = prebuilts.iter().map(|p| p.triple.as_str()).collect();
         let deps: serde_json::Value = serde_json::from_str(&v.dependencies).unwrap_or(json!({}));
+        // For metadata-only packages, expose the upstream URL directly so clients
+        // can fetch the source archive without routing through the registry server.
+        let effective_download_url = v.upstream_url.clone().unwrap_or(url);
         versions_json.push(json!({
             "version":         v.version,
             "checksum":        v.checksum,
-            "download_url":    url,
+            "download_url":    effective_download_url,
+            "upstream_url":    v.upstream_url,
+            "build_system":    v.build_system,
             "yanked":          v.yanked != 0,
             "downloads":       v.downloads,
             "prebuilt_triples": prebuilt_triples,

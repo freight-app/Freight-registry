@@ -37,6 +37,16 @@ pub async fn download(
                 return Err(ApiError::gone(format!("`{name}@{version}` has been yanked")));
             }
 
+            // Metadata-only package: redirect to the upstream source archive.
+            if let Some(ref upstream_url) = ver.upstream_url {
+                state.db.increment_downloads(&name, &version, channel);
+                return Response::builder()
+                    .status(StatusCode::FOUND)
+                    .header(header::LOCATION, upstream_url.as_str())
+                    .body(Body::empty())
+                    .map_err(|e| ApiError::internal(e.to_string()));
+            }
+
             let data = state
                 .storage
                 .read(&name, &version)

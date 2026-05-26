@@ -30,6 +30,13 @@ struct PublishMeta {
     /// Channel to publish to (default: "stable").
     #[serde(default)]
     channel: Option<String>,
+    /// Upstream source archive URL for "metadata-only" packages.
+    /// When set the server does not store a tarball; `/download` issues a 302 redirect.
+    #[serde(default)]
+    upstream_url: Option<String>,
+    /// Foreign build system required to compile this package ("cmake", "make", "meson", …).
+    #[serde(default)]
+    build_system: Option<String>,
 }
 
 pub async fn publish(
@@ -70,21 +77,40 @@ pub async fn publish(
         }
     }
 
-    if tarball.len() < 2 || tarball[0] != 0x1f || tarball[1] != 0x8b {
+    let is_metadata_only = meta.upstream_url.is_some();
+
+    // For metadata-only packages (upstream_url set) the client sends an empty tarball.
+    // For regular packages we require a valid gzip archive.
+    if !is_metadata_only && (tarball.len() < 2 || tarball[0] != 0x1f || tarball[1] != 0x8b) {
         return Err(ApiError::bad_request("tarball is not a valid gzip archive"));
     }
 
-    let checksum = hex::encode(Sha256::digest(tarball));
-    let dependencies = extract_dependencies(tarball);
-    let readme = extract_file(tarball, "README.md")
-        .or_else(|| extract_file(tarball, "readme.md"))
-        .or_else(|| extract_file(tarball, "README"));
+    let checksum = if is_metadata_only {
+        String::new()
+    } else {
+        hex::encode(Sha256::digest(tarball))
+    };
 
-    state
-        .storage
-        .save(&meta.name, &meta.vers, tarball)
-        .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let dependencies = if is_metadata_only {
+        "{}".to_string()
+    } else {
+        extract_dependencies(tarball)
+    };
+    let readme = if is_metadata_only {
+        None
+    } else {
+        extract_file(tarball, "README.md")
+            .or_else(|| extract_file(tarball, "readme.md"))
+            .or_else(|| extract_file(tarball, "README"))
+    };
+
+    if !is_metadata_only {
+        state
+            .storage
+            .save(&meta.name, &meta.vers, tarball)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+    }
 
     if let Some(ref content) = readme {
         let _ = state.storage.save_readme(&meta.name, content.as_bytes()).await;
@@ -92,7 +118,17 @@ pub async fn publish(
 
     state
         .db
-        .publish_version(auth.user.id, &meta.name, channel, meta.description.as_deref(), &meta.vers, &checksum, &dependencies)
+        .publish_version(
+            auth.user.id,
+            &meta.name,
+            channel,
+            meta.description.as_deref(),
+            &meta.vers,
+            &checksum,
+            &dependencies,
+            meta.upstream_url.as_deref(),
+            meta.build_system.as_deref(),
+        )
         .await?;
 
     state.metrics.publishes_total.inc();

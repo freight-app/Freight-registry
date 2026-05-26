@@ -25,7 +25,6 @@ struct PublishMeta {
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
-    #[allow(dead_code)]
     license: Option<String>,
     /// Channel to publish to (default: "stable").
     #[serde(default)]
@@ -123,6 +122,7 @@ pub async fn publish(
             &meta.name,
             channel,
             meta.description.as_deref(),
+            meta.license.as_deref(),
             &meta.vers,
             &checksum,
             &dependencies,

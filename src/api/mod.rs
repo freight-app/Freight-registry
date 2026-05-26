@@ -81,7 +81,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/metrics",                                  get(metrics_handler::metrics))
         // Public read
         .route("/api/v1/packages/:name",                             get(packages::get_package))
-        .route("/api/v1/packages/:name/readme",                      get(readme::get_readme))
+        .route("/api/v1/packages/:name/readme",                      get(readme::get_readme).put(readme::put_readme))
         .route("/api/v1/search",                                     get(search::search_packages))
         .route("/api/v1/packages/:name/:version/download",           get(download::download))
         .route("/api/v1/packages/:name/:version/prebuilts",          get(prebuilt::list))

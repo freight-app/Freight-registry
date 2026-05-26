@@ -55,6 +55,7 @@ pub struct PackageRow {
     pub name:        String,
     pub channel:     String,
     pub description: Option<String>,
+    pub license:     Option<String>,
 }
 
 pub const DEFAULT_CHANNEL: &str = "stable";
@@ -475,7 +476,7 @@ impl Db {
 
     pub async fn get_package(&self, name: &str, channel: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description FROM packages \
+            "SELECT id, name, channel, description, license FROM packages \
              WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(name)
@@ -564,7 +565,7 @@ impl Db {
         .await?;
 
         let pkgs: Vec<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description FROM packages
+            "SELECT id, name, channel, description, license FROM packages
              WHERE lower(name) LIKE lower(?) AND channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)
              ORDER BY name LIMIT ? OFFSET ?",
@@ -602,6 +603,7 @@ impl Db {
         name: &str,
         channel: &str,
         description: Option<&str>,
+        license: Option<&str>,
         version: &str,
         checksum: &str,
         dependencies: &str,
@@ -609,17 +611,20 @@ impl Db {
         build_system: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO packages (name, channel, description) VALUES (?, ?, ?)
-             ON CONFLICT(name, channel) DO UPDATE SET description = COALESCE(excluded.description, description)",
+            "INSERT INTO packages (name, channel, description, license) VALUES (?, ?, ?, ?)
+             ON CONFLICT(name, channel) DO UPDATE SET
+               description = COALESCE(excluded.description, description),
+               license     = COALESCE(excluded.license, license)",
         )
         .bind(name)
         .bind(channel)
         .bind(description)
+        .bind(license)
         .execute(&self.pool)
         .await?;
 
         let pkg: PackageRow = sqlx::query_as(
-            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
+            "SELECT id, name, channel, description, license FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(name)
         .bind(channel)
@@ -684,7 +689,7 @@ impl Db {
         channel: &str,
     ) -> Result<Option<bool>> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
+            "SELECT id, name, channel, description, license FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(package_name)
         .bind(channel)
@@ -723,7 +728,7 @@ impl Db {
 
     pub async fn add_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
         let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description FROM packages WHERE lower(name) = lower(?) AND channel = ?",
+            "SELECT id, name, channel, description, license FROM packages WHERE lower(name) = lower(?) AND channel = ?",
         )
         .bind(package_name)
         .bind(channel)

@@ -70,6 +70,7 @@ async fn get_package_local(
         "name":        pkg.name,
         "channel":     pkg.channel,
         "description": pkg.description,
+        "license":     pkg.license,
         "latest":      latest,
         "versions":    versions_json,
     })))

@@ -8,7 +8,7 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::Value;
 
-use freight_registry::{api, db::Db, metrics::Metrics, rate_limit::Limiters, storage::Storage, AppState};
+use freight_registry::{api, db::Db, mail::StdoutMailer, metrics::Metrics, rate_limit::Limiters, storage::Storage, AppState};
 
 // ── Test infrastructure ───────────────────────────────────────────────────────
 
@@ -23,11 +23,13 @@ async fn make_state() -> Arc<AppState> {
     let db = Db::open_memory().await.unwrap();
     Arc::new(AppState {
         db,
-        storage:         Storage::new(tmp_dir()),
-        base_url:        "http://localhost".to_string(),
-        limiters:        Limiters::new(100_000, 100_000),
-        metrics:         Metrics::new(),
-        mirror_upstream: None,
+        storage:              Storage::new(tmp_dir()),
+        base_url:             "http://localhost".to_string(),
+        limiters:             Limiters::new(100_000, 100_000),
+        metrics:              Metrics::new(),
+        mailer:               Arc::new(StdoutMailer),
+        mirror_upstream:      None,
+        max_packages_per_user: None,
     })
 }
 

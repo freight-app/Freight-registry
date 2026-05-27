@@ -23,6 +23,7 @@ use freight_registry::{
     auth::hash_password,
     config,
     db::Db,
+    mail::{Mailer, SmtpConfig, SmtpMailer, StdoutMailer},
     metrics::Metrics,
     rate_limit::Limiters,
     storage::Storage,
@@ -92,6 +93,25 @@ enum Command {
         /// Maximum number of packages a non-admin user may own (omit for no limit)
         #[arg(long, env = "FREIGHT_MAX_PACKAGES_PER_USER")]
         max_packages_per_user: Option<u32>,
+        // ── SMTP email delivery (all optional; omit to log links to stdout) ──
+        /// SMTP server hostname — enables real email delivery when set
+        #[arg(long, env = "FREIGHT_SMTP_HOST")]
+        smtp_host: Option<String>,
+        /// SMTP server port (default: 587 for STARTTLS, 465 for TLS, 25 for none)
+        #[arg(long, env = "FREIGHT_SMTP_PORT")]
+        smtp_port: Option<u16>,
+        /// SMTP login username
+        #[arg(long, env = "FREIGHT_SMTP_USERNAME")]
+        smtp_username: Option<String>,
+        /// SMTP login password
+        #[arg(long, env = "FREIGHT_SMTP_PASSWORD")]
+        smtp_password: Option<String>,
+        /// Sender address, e.g. "Freight <noreply@example.com>"
+        #[arg(long, env = "FREIGHT_SMTP_FROM", default_value = "Freight Registry <noreply@localhost>")]
+        smtp_from: String,
+        /// TLS mode: starttls (default), tls, or none
+        #[arg(long, env = "FREIGHT_SMTP_TLS", default_value = "starttls")]
+        smtp_tls: String,
     },
     /// Manage user accounts
     User {
@@ -184,6 +204,7 @@ async fn main() -> Result<()> {
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
             mirror_upstream, max_packages_per_user,
+            smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
                 Some(ref bucket) => {
@@ -208,12 +229,38 @@ async fn main() -> Result<()> {
                 tracing::info!("max packages per non-admin user: {limit}");
             }
 
+            // Build mailer: real SMTP when --smtp-host is provided, stdout otherwise.
+            let mailer: Arc<dyn Mailer> = if let Some(ref host) = smtp_host {
+                let cfg = SmtpConfig {
+                    host:     host.clone(),
+                    port:     smtp_port,
+                    username: smtp_username,
+                    password: smtp_password,
+                    from:     smtp_from,
+                    tls:      Some(smtp_tls),
+                };
+                match SmtpMailer::new(&cfg) {
+                    Ok(m) => {
+                        tracing::info!("smtp: delivering email via {host}");
+                        Arc::new(m)
+                    }
+                    Err(e) => {
+                        tracing::error!("smtp: failed to initialise ({e:#}); falling back to stdout logging");
+                        Arc::new(StdoutMailer)
+                    }
+                }
+            } else {
+                tracing::info!("smtp: no host configured — email links will be logged to stdout");
+                Arc::new(StdoutMailer)
+            };
+
             let state = Arc::new(AppState {
                 db,
                 storage,
                 base_url:             base_url.trim_end_matches('/').to_string(),
                 limiters:             Limiters::new(rate_limit_read, rate_limit_write),
                 metrics:              Metrics::new(),
+                mailer,
                 mirror_upstream:      mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
                 max_packages_per_user,
             });

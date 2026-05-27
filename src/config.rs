@@ -24,6 +24,15 @@
 //! rate_limit_write  = 10
 //! audit_log_ttl_days = 90
 //!
+//! # Email delivery — omit this section to log links to stdout instead
+//! [serve.smtp]
+//! host     = "smtp.example.com"
+//! port     = 587                          # default: 587 (STARTTLS), 465 (TLS), 25 (none)
+//! username = "noreply@example.com"
+//! password = "secret"
+//! from     = "Freight Registry <noreply@example.com>"
+//! tls      = "starttls"                   # "starttls" (default), "tls", or "none"
+//!
 //! [serve.s3]
 //! bucket   = "freight-packages"
 //! endpoint = "http://minio:9000"
@@ -58,6 +67,20 @@ pub struct ServeConfig {
     pub rate_limit_write:   Option<u32>,
     pub audit_log_ttl_days: Option<i64>,
     pub s3:                 Option<S3Config>,
+    pub smtp:               Option<SmtpFileConfig>,
+}
+
+/// SMTP settings under `[serve.smtp]` in the config file.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SmtpFileConfig {
+    pub host:     Option<String>,
+    pub port:     Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub from:     Option<String>,
+    /// `"starttls"` (default), `"tls"`, or `"none"`
+    pub tls:      Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -144,6 +167,15 @@ fn apply(cfg: Config) {
     if let Some(v) = s.rate_limit_read    { set_if_absent("FREIGHT_RATE_LIMIT_READ",   &v.to_string()); }
     if let Some(v) = s.rate_limit_write   { set_if_absent("FREIGHT_RATE_LIMIT_WRITE",  &v.to_string()); }
     if let Some(v) = s.audit_log_ttl_days { set_if_absent("FREIGHT_AUDIT_LOG_TTL_DAYS",&v.to_string()); }
+
+    if let Some(smtp) = s.smtp {
+        if let Some(v) = smtp.host     { set_if_absent("FREIGHT_SMTP_HOST",     &v); }
+        if let Some(v) = smtp.port     { set_if_absent("FREIGHT_SMTP_PORT",     &v.to_string()); }
+        if let Some(v) = smtp.username { set_if_absent("FREIGHT_SMTP_USERNAME", &v); }
+        if let Some(v) = smtp.password { set_if_absent("FREIGHT_SMTP_PASSWORD", &v); }
+        if let Some(v) = smtp.from     { set_if_absent("FREIGHT_SMTP_FROM",     &v); }
+        if let Some(v) = smtp.tls      { set_if_absent("FREIGHT_SMTP_TLS",      &v); }
+    }
 
     let Some(s3) = s.s3 else { return };
 

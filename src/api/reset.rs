@@ -1,8 +1,8 @@
 //! Password reset — two endpoints:
 //!
 //! POST /api/v1/users/reset-password/request
-//!   Logs a reset link to stdout (no SMTP). Always returns 200 regardless of
-//!   whether the username exists, to prevent user enumeration.
+//!   Sends a reset link via the configured Mailer. Always returns 200 regardless
+//!   of whether the username exists, to prevent user enumeration.
 //!
 //! POST /api/v1/users/reset-password/confirm
 //!   Validates the reset token and sets a new password.
@@ -35,16 +35,23 @@ pub async fn request_reset(
     // Intentionally always returns 200 — don't leak whether the username exists.
     if let Ok(Some(user)) = state.db.get_user_by_username(&req.username).await {
         let token = state.db.create_email_token(user.id, "reset").await?;
-        tracing::warn!(
-            user = %user.username,
-            "PASSWORD RESET LINK (expires in 1 h): \
-             {}/api/v1/users/reset-password/confirm?token={token}",
+        let link = format!(
+            "{}/api/v1/users/reset-password/confirm?token={token}",
             state.base_url,
         );
+        // Only send if the account has an email address on file.
+        if let Some(ref email) = user.email {
+            state.mailer.send_password_reset(email, &user.username, &link).await;
+        } else {
+            tracing::warn!(
+                user = %user.username,
+                "password reset requested but no email on file — link: {link}",
+            );
+        }
     }
     Ok(Json(json!({
         "ok":      true,
-        "message": "if that account exists, a reset link has been logged to the server console",
+        "message": "if that account exists and has an email address, a reset link has been sent",
     })))
 }
 

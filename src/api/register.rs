@@ -3,8 +3,8 @@
 //! Open registration: any client can create a new account and receive an
 //! initial API token in one round-trip.  Rate-limited by the write limiter.
 //!
-//! If an email address is provided a verification link is logged to stdout via
-//! `tracing::warn!` (no SMTP dependency).
+//! If an email address is provided a verification link is delivered via the
+//! configured [`Mailer`] (real SMTP when `--smtp-host` is set, stdout otherwise).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -61,16 +61,14 @@ pub async fn register(
         .create_token(user_id, &token_name, Some(90), "api", "publish")
         .await?;
 
-    // Log a verification link when an email was provided.
+    // Send a verification link when an email was provided.
     if let Some(ref email) = req.email {
         let verify_token = state.db.create_email_token(user_id, "verify").await?;
-        tracing::warn!(
-            user = %req.username,
-            email = %email,
-            "EMAIL VERIFICATION LINK (expires in 24 h): \
-             {}/api/v1/users/verify-email?token={verify_token}",
+        let link = format!(
+            "{}/api/v1/users/verify-email?token={verify_token}",
             state.base_url,
         );
+        state.mailer.send_verification(email, &req.username, &link).await;
     }
 
     let ip = addr.ip().to_string();

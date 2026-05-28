@@ -132,10 +132,23 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
 }
 
 async fn me(auth: crate::auth::AuthToken) -> Json<serde_json::Value> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let expires_at  = auth.token.expires_at;
+    let expires_in  = expires_at.map(|t| (t - now).max(0));
+
     Json(json!({
-        "login":    auth.user.username,
-        "id":       auth.user.id,
-        "is_admin": auth.user.is_admin != 0,
+        "login":            auth.user.username,
+        "id":               auth.user.id,
+        "is_admin":         auth.user.is_admin != 0,
+        // Token validity.  `token_expires_at` is a Unix timestamp (null = never expires).
+        // `token_expires_in` is seconds remaining (null = never expires).
+        // Call GET /api/v1/me to verify a token is still accepted by the server.
+        "token_expires_at": expires_at,
+        "token_expires_in": expires_in,
     }))
 }
 

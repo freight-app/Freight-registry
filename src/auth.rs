@@ -28,7 +28,6 @@ pub fn hash_password(password: &str) -> anyhow::Result<String> {
 /// Rejects tokens with `kind = "refresh"` — those may only be used at `/auth/refresh`.
 pub struct AuthToken {
     pub user:  UserRow,
-    #[allow(dead_code)]
     pub token: TokenRow,
 }
 

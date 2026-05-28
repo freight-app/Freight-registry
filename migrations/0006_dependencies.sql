@@ -1,1 +1,0 @@
-ALTER TABLE versions ADD COLUMN dependencies TEXT NOT NULL DEFAULT '{}';

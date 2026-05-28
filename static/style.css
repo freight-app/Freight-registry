@@ -220,20 +220,25 @@ main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 10
   background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px 18px;
-  margin-bottom: 28px;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  /* When used standalone (legacy) keep a bottom margin; overridden to 0 when inside sidebar-box */
+  margin-bottom: 0;
 }
 
 .install-box code {
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 13px;
   color: var(--green);
   user-select: all;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .copy-btn {
@@ -319,9 +324,22 @@ tr:hover td { background: var(--surface); }
 
 .yanked { opacity: .5; text-decoration: line-through; }
 
-.dep-table { font-size: 13px; }
-.dep-table td:first-child { font-family: var(--font-mono); color: var(--accent); }
-.dep-table td:last-child  { color: var(--muted); font-family: var(--font-mono); }
+.dep-table { font-size: 12px; width: 100%; }
+.dep-table td { padding: 4px 0; border: none; }
+.dep-table td:first-child {
+  font-family: var(--font-mono);
+  color: var(--accent);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dep-table td:last-child  {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  text-align: right;
+  padding-left: 8px;
+}
 
 /* ── README area ──────────────────────────────────────────────────────────── */
 

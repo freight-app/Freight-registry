@@ -176,16 +176,13 @@ async function loadPackage(name, channel, selectedVersion) {
         </div>
       </div>
 
-      <div class="install-box">
-        <code id="install-code">${installLine}</code>
-        <button class="copy-btn" data-copy="${installLine}">Copy</button>
-      </div>
-
-      ${readmeHtml}
-
       <div class="detail-grid">
+
+        <!-- ── Left column: README → Versions → Prebuilts ── -->
         <div>
-          <div class="versions-section">
+          ${readmeHtml || '<div style="height:4px"></div>'}
+
+          <div class="versions-section" style="margin-top:${readmeHtml ? '24px' : '0'}">
             <h2>Versions</h2>
             <table>
               <thead>
@@ -201,17 +198,23 @@ async function loadPackage(name, channel, selectedVersion) {
             </table>
           </div>
 
-          <div style="margin-top:24px">
-            <h2 style="font-size:16px;margin-bottom:12px">Dependencies
-              <span style="font-size:13px;font-weight:400;color:var(--muted)"> — v${esc(latest.version ?? pkg.latest)}</span>
-            </h2>
-            ${depsHtml}
-          </div>
-
           ${prebuiltsHtml}
         </div>
 
+        <!-- ── Right sidebar ── -->
         <div>
+
+          <!-- Install -->
+          <div class="sidebar-box">
+            <h3>Install</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Add to <code>freight.toml</code>:</p>
+            <div class="install-box" style="margin:0">
+              <code id="install-code" style="font-size:12px">${installLine}</code>
+              <button class="copy-btn" data-copy="${installLine}">Copy</button>
+            </div>
+          </div>
+
+          <!-- Metadata -->
           <div class="sidebar-box">
             <h3>Metadata</h3>
             <ul>
@@ -234,6 +237,15 @@ async function loadPackage(name, channel, selectedVersion) {
             </ul>
           </div>
 
+          <!-- Dependencies -->
+          <div class="sidebar-box">
+            <h3>Dependencies
+              <span style="font-weight:400;color:var(--muted)"> — v${esc(latest.version ?? pkg.latest)}</span>
+            </h3>
+            ${depsHtml}
+          </div>
+
+          <!-- Owners -->
           ${ownerList.length ? `
           <div class="sidebar-box">
             <h3>Owners</h3>
@@ -242,6 +254,7 @@ async function loadPackage(name, channel, selectedVersion) {
             </ul>
           </div>` : ''}
 
+          <!-- Quick links -->
           <div class="sidebar-box">
             <h3>Quick links</h3>
             <ul>
@@ -250,6 +263,7 @@ async function loadPackage(name, channel, selectedVersion) {
                      style="font-size:13px">Download latest ↗</a></li>
             </ul>
           </div>
+
         </div>
       </div>`;
   } catch (err) {

@@ -39,11 +39,46 @@
 //! key_id   = "AKIAIOSFODNN7EXAMPLE"
 //! secret   = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 //! region   = "us-east-1"
+//!
+//! # OAuth / OIDC providers — each becomes a /auth/:name login route.
+//! # Repeat the [[serve.oauth]] block for multiple providers.
+//! #
+//! # OIDC auto-discovery (Okta, Azure AD, Keycloak, self-hosted GitLab, …):
+//! [[serve.oauth]]
+//! name          = "okta"
+//! display_name  = "Okta SSO"
+//! client_id     = "0oa…"
+//! client_secret = "…"
+//! issuer        = "https://company.okta.com"
+//!
+//! # Manual endpoints (non-OIDC, e.g. Gitea):
+//! [[serve.oauth]]
+//! name                   = "gitea"
+//! client_id              = "abc"
+//! client_secret          = "def"
+//! authorization_endpoint = "https://git.internal/login/oauth/authorize"
+//! token_endpoint         = "https://git.internal/login/oauth/access_token"
+//! userinfo_endpoint      = "https://git.internal/api/v1/user"
+//! id_field               = "id"
+//! username_field         = "login"
+//! ```
+//!
+//! # OAuth env-var shortcuts (no config file needed)
+//!
+//! For GitHub, GitLab, and Google you can skip the config file entirely:
+//!
+//! ```sh
+//! export GITHUB_CLIENT_ID=…     GITHUB_CLIENT_SECRET=…   # enables /auth/github
+//! export GITLAB_CLIENT_ID=…     GITLAB_CLIENT_SECRET=…   # enables /auth/gitlab
+//! export GITLAB_ISSUER=https://git.internal               # optional: self-hosted GitLab
+//! export GOOGLE_CLIENT_ID=…     GOOGLE_CLIENT_SECRET=…   # enables /auth/google
 //! ```
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+use crate::oauth::OAuthProviderConfig;
 
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +103,20 @@ pub struct ServeConfig {
     pub audit_log_ttl_days: Option<i64>,
     pub s3:                 Option<S3Config>,
     pub smtp:               Option<SmtpFileConfig>,
+    /// OAuth/OIDC providers.  Each entry becomes a `/auth/:name` login route.
+    /// See [`OAuthProviderConfig`] for the full set of fields.
+    ///
+    /// Example (OIDC auto-discovery):
+    /// ```toml
+    /// [[serve.oauth]]
+    /// name          = "okta"
+    /// display_name  = "Okta SSO"
+    /// client_id     = "0oa…"
+    /// client_secret = "…"
+    /// issuer        = "https://company.okta.com"
+    /// ```
+    #[serde(default)]
+    pub oauth: Vec<OAuthProviderConfig>,
 }
 
 /// SMTP settings under `[serve.smtp]` in the config file.
@@ -93,16 +142,22 @@ pub struct S3Config {
     pub region:   Option<String>,
 }
 
-/// Load a config file and inject values as env vars (only for unset vars).
-/// Returns the path that was loaded, or `None` if no file was found.
-pub fn load() -> Option<PathBuf> {
-    let path = find_config_file()?;
+/// Load a config file, inject scalar values as env vars (only for unset vars),
+/// and return any OAuth provider configs (which cannot be expressed as env vars).
+///
+/// Returns `(path_loaded, oauth_providers)`.  `path_loaded` is `None` when no
+/// config file was found.  `oauth_providers` is empty when the file has no
+/// `[[serve.oauth]]` entries.
+pub fn load() -> (Option<PathBuf>, Vec<OAuthProviderConfig>) {
+    let Some(path) = find_config_file() else {
+        return (None, vec![]);
+    };
 
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("warning: could not read config {}: {e}", path.display());
-            return None;
+            return (None, vec![]);
         }
     };
 
@@ -114,8 +169,9 @@ pub fn load() -> Option<PathBuf> {
         }
     };
 
+    let oauth = cfg.serve.as_ref().map(|s| s.oauth.clone()).unwrap_or_default();
     apply(cfg);
-    Some(path)
+    (Some(path), oauth)
 }
 
 fn find_config_file() -> Option<PathBuf> {

@@ -258,9 +258,14 @@ impl Db {
     // ── OAuth ──────────────────────────────────────────────────────────────────
 
     /// Sentinel stored as `password_hash` for OAuth-only accounts.
-    /// This is deliberately not a valid Argon2 PHC string so that password
-    /// login returns a useful error rather than a 500.
-    pub const OAUTH_SENTINEL: &'static str = "!oauth:github";
+    ///
+    /// This is deliberately not a valid Argon2 PHC string so that the
+    /// password-login handler can detect it and return a helpful error instead
+    /// of a 500.  The login handler checks `starts_with("!oauth:")`, so all
+    /// provider sentinels match that pattern regardless of provider name.
+    pub fn oauth_sentinel(provider: &str) -> String {
+        format!("!oauth:{provider}")
+    }
 
     /// Look up the freight user linked to a given OAuth identity.
     pub async fn find_oauth_user(
@@ -349,8 +354,9 @@ impl Db {
             suffix += 1;
         }
 
+        let sentinel = Self::oauth_sentinel(provider);
         let user_id = self
-            .create_user(&username, email, Self::OAUTH_SENTINEL)
+            .create_user(&username, email, &sentinel)
             .await?;
 
         // Mark email as verified since GitHub already verified it.

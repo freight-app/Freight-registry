@@ -129,8 +129,14 @@ async function loadPackage(name, channel, selectedVersion) {
     const depEntries = Object.entries(deps);
     const depsHtml = depEntries.length === 0
       ? '<p style="color:var(--muted);font-size:13px">No dependencies.</p>'
-      : `<table class="dep-table">${depEntries.map(([k, v]) =>
-           `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</table>`;
+      : `<table class="dep-table">${depEntries.map(([k, v]) => {
+           const ver = typeof v === 'object' ? (v.version ?? JSON.stringify(v)) : v;
+           const depChannel = typeof v === 'object' && v.channel ? `?channel=${encodeURIComponent(v.channel)}` : '';
+           return `<tr>
+             <td><a href="/packages/${encodeURIComponent(k)}${depChannel}" style="color:var(--accent)">${esc(k)}</a></td>
+             <td>${esc(ver)}</td>
+           </tr>`;
+         }).join('')}</table>`;
 
     // ── Build prebuilts panel ──────────────────────────────────────────────
     const triples = latest.prebuilt_triples ?? [];

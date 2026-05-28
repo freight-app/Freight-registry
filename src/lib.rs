@@ -43,6 +43,10 @@ pub struct AppState {
     /// Maximum number of packages a non-admin user may own simultaneously.
     /// `None` means no limit. Admins are always exempt.
     pub max_packages_per_user: Option<u32>,
+    /// Base URL of a separate download server.  When set, `/download` endpoints
+    /// redirect there instead of streaming bytes through this server.
+    /// See `config.rs` for the full priority chain.
+    pub download_url: Option<String>,
     /// Resolved OAuth/OIDC providers.  Empty when OAuth is not configured.
     /// Keyed by iteration; look up by `provider.name`.
     pub oauth_providers: Vec<OAuthProvider>,

@@ -94,6 +94,12 @@ enum Command {
         /// Maximum number of packages a non-admin user may own (omit for no limit)
         #[arg(long, env = "FREIGHT_MAX_PACKAGES_PER_USER")]
         max_packages_per_user: Option<u32>,
+        /// Base URL of a separate download server (CDN, nginx, public S3 bucket, …).
+        /// When set, /download endpoints return a 302 redirect here instead of
+        /// streaming bytes through the registry server.  When absent and the S3
+        /// backend is configured, the server generates presigned URLs automatically.
+        #[arg(long, env = "FREIGHT_DOWNLOAD_URL")]
+        download_url: Option<String>,
         // ── SMTP email delivery (all optional; omit to log links to stdout) ──
         /// SMTP server hostname — enables real email delivery when set
         #[arg(long, env = "FREIGHT_SMTP_HOST")]
@@ -206,7 +212,7 @@ async fn main() -> Result<()> {
             bind, base_url, max_upload_mb, audit_log_ttl_days,
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
-            mirror_upstream, max_packages_per_user,
+            mirror_upstream, max_packages_per_user, download_url,
             smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
@@ -230,6 +236,15 @@ async fn main() -> Result<()> {
 
             if let Some(limit) = max_packages_per_user {
                 tracing::info!("max packages per non-admin user: {limit}");
+            }
+
+            let download_url = download_url.map(|u| u.trim_end_matches('/').to_string());
+            if let Some(ref dl) = download_url {
+                tracing::info!("download server: {dl}");
+            } else if storage.is_s3() {
+                tracing::info!("download server: S3 presigned URLs (15 min TTL)");
+            } else {
+                tracing::info!("download server: streaming from local storage");
             }
 
             // Build mailer: real SMTP when --smtp-host is provided, stdout otherwise.
@@ -311,6 +326,7 @@ async fn main() -> Result<()> {
                 mailer,
                 mirror_upstream:      mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
                 max_packages_per_user,
+                download_url,
                 oauth_providers,
                 oauth_states:         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });

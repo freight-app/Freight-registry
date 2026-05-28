@@ -6,6 +6,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     body::Body,
@@ -17,6 +18,9 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+/// Presigned URL TTL for S3 prebuilt downloads.
+const PRESIGN_TTL: Duration = Duration::from_secs(15 * 60);
 
 use crate::{auth::PublishToken, db::DEFAULT_CHANNEL, validate, AppState};
 use super::{ApiError, ApiResult};
@@ -116,6 +120,30 @@ pub async fn download(
             format!("no prebuilt for `{name}@{version}` triple `{triple}` in channel `{channel}`")
         ))?;
 
+    // ── Priority 1: explicit download URL ────────────────────────────────────
+    if let Some(ref base) = state.download_url {
+        let url = format!("{base}/{name}/{version}/{name}-{version}-{triple}.tar.gz");
+        return Response::builder()
+            .status(StatusCode::FOUND)
+            .header(header::LOCATION, url)
+            .body(Body::empty())
+            .map_err(|e| ApiError::internal(e.to_string()));
+    }
+
+    // ── Priority 2: S3 presigned URL ─────────────────────────────────────────
+    if let Ok(Some(presigned)) = state
+        .storage
+        .presigned_get_prebuilt_url(&name, &version, &triple, PRESIGN_TTL)
+        .await
+    {
+        return Response::builder()
+            .status(StatusCode::FOUND)
+            .header(header::LOCATION, presigned.as_str())
+            .body(Body::empty())
+            .map_err(|e| ApiError::internal(e.to_string()));
+    }
+
+    // ── Priority 3: stream from local storage ─────────────────────────────────
     let data = state.storage.read_prebuilt(&name, &version, &triple).await
         .map_err(|_| ApiError::not_found(
             format!("prebuilt file for `{name}@{version}` triple `{triple}` not found on disk")
@@ -132,18 +160,13 @@ pub async fn download(
     }
 
     let filename = format!("{name}-{version}-{triple}.tar.gz");
-    let resp = Response::builder()
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/gzip")
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{filename}\""),
-        )
+        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\""))
         .header("x-checksum-sha256", &row.checksum)
         .body(Body::from(data))
-        .map_err(|e| ApiError::internal(e.to_string()))?;
-
-    Ok(resp)
+        .map_err(|e| ApiError::internal(e.to_string()))
 }
 
 /// GET /api/v1/packages/:name/:version/prebuilts

@@ -103,6 +103,17 @@ pub struct ServeConfig {
     pub audit_log_ttl_days: Option<i64>,
     pub s3:                 Option<S3Config>,
     pub smtp:               Option<SmtpFileConfig>,
+    /// Base URL of a separate download server (CDN, nginx, S3 public bucket, …).
+    ///
+    /// When set, the `/download` endpoints return a `302` redirect to
+    /// `{download_url}/{name}/{version}/{name}-{version}.tar.gz` instead of
+    /// streaming bytes through the registry server.
+    ///
+    /// When absent and the storage backend is S3, the server generates a
+    /// presigned URL and redirects to that instead.
+    ///
+    /// When absent and the storage backend is local, bytes are streamed directly.
+    pub download_url:       Option<String>,
     /// OAuth/OIDC providers.  Each entry becomes a `/auth/:name` login route.
     /// See [`OAuthProviderConfig`] for the full set of fields.
     ///
@@ -223,6 +234,7 @@ fn apply(cfg: Config) {
     if let Some(v) = s.rate_limit_read    { set_if_absent("FREIGHT_RATE_LIMIT_READ",   &v.to_string()); }
     if let Some(v) = s.rate_limit_write   { set_if_absent("FREIGHT_RATE_LIMIT_WRITE",  &v.to_string()); }
     if let Some(v) = s.audit_log_ttl_days { set_if_absent("FREIGHT_AUDIT_LOG_TTL_DAYS",&v.to_string()); }
+    if let Some(v) = s.download_url       { set_if_absent("FREIGHT_DOWNLOAD_URL",      &v); }
 
     if let Some(smtp) = s.smtp {
         if let Some(v) = smtp.host     { set_if_absent("FREIGHT_SMTP_HOST",     &v); }

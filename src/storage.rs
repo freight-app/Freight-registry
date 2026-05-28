@@ -1,17 +1,23 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 use futures::StreamExt;
 use object_store::{path::Path as ObjPath, ObjectStore};
+use object_store::aws::AmazonS3;
+use object_store::signer::Signer;
+
 
 // ── Backend ───────────────────────────────────────────────────────────────────
 
 enum Backend {
-    /// Local filesystem — original behaviour, lazily creates directories.
+    /// Local filesystem — lazily creates directories.
     Local(PathBuf),
-    /// Any S3-compatible store (AWS, MinIO, …).
-    S3(Arc<dyn ObjectStore>),
+    /// S3-compatible store (AWS, MinIO, …).
+    /// Stored as the concrete `AmazonS3` type so we can generate presigned URLs
+    /// in addition to the standard ObjectStore operations.
+    S3(Arc<AmazonS3>),
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────
@@ -51,7 +57,7 @@ impl Storage {
         Ok(Self { backend: Backend::S3(Arc::new(builder.build()?)) })
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────
+    // ── Path helpers ──────────────────────────────────────────────────────────
 
     fn local_path(root: &PathBuf, name: &str, version: &str) -> PathBuf {
         root.join(name)
@@ -71,6 +77,58 @@ impl Storage {
 
     fn s3_prebuilt_key(name: &str, version: &str, triple: &str) -> ObjPath {
         ObjPath::from(format!("{name}/{version}/{name}-{version}-{triple}.tar.gz"))
+    }
+
+    // ── Presigned URLs ────────────────────────────────────────────────────────
+
+    /// Generate a presigned GET URL for a source tarball.
+    ///
+    /// Returns `None` for the local filesystem backend (presigning not applicable).
+    /// The URL is valid for `expires_in` (typically 15 minutes).
+    pub async fn presigned_get_url(
+        &self,
+        name:       &str,
+        version:    &str,
+        expires_in: Duration,
+    ) -> Result<Option<url::Url>> {
+        match &self.backend {
+            Backend::Local(_) => Ok(None),
+            Backend::S3(store) => {
+                let url = store
+                    .signed_url(
+                        axum::http::Method::GET,
+                        &Self::s3_key(name, version),
+                        expires_in,
+                    )
+                    .await?;
+                Ok(Some(url))
+            }
+        }
+    }
+
+    /// Generate a presigned GET URL for a prebuilt tarball.
+    ///
+    /// Returns `None` for the local filesystem backend.
+    pub async fn presigned_get_prebuilt_url(
+        &self,
+        name:       &str,
+        version:    &str,
+        triple:     &str,
+        expires_in: Duration,
+    ) -> Result<Option<url::Url>> {
+        match &self.backend {
+            Backend::Local(_) => Ok(None),
+            Backend::S3(store) => {
+                let url = store
+                    .signed_url(
+                        axum::http::Method::GET,
+                        &Self::s3_prebuilt_key(name, version, triple),
+                        expires_in,
+                    )
+                    .await?;
+                Ok(Some(url))
+            }
+        }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -135,9 +193,7 @@ impl Storage {
         }
     }
 
-    /// Remove all stored tarballs for a package. Silently succeeds if none exist.
-    /// Store a README for a package. Stored once per package name (not per version).
-    /// Existing README is overwritten so the latest publish wins.
+    /// Store a README for a package (once per package name, overwritten on each publish).
     pub async fn save_readme(&self, name: &str, content: &[u8]) -> Result<()> {
         match &self.backend {
             Backend::Local(root) => {
@@ -176,6 +232,7 @@ impl Storage {
         String::from_utf8(bytes).ok()
     }
 
+    /// Remove all stored tarballs for a package. Silently succeeds if none exist.
     pub async fn delete_package_dir(&self, name: &str) -> Result<()> {
         match &self.backend {
             Backend::Local(root) => {
@@ -195,5 +252,11 @@ impl Storage {
             }
         }
         Ok(())
+    }
+
+    /// Returns `true` if this storage backend is S3-compatible.
+    /// Used by callers that want to know whether presigning is available.
+    pub fn is_s3(&self) -> bool {
+        matches!(self.backend, Backend::S3(_))
     }
 }

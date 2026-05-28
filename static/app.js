@@ -109,6 +109,50 @@ function setError(el, msg) {
   el.innerHTML = `<div class="error">${esc(msg)}</div>`;
 }
 
+/**
+ * Derive a repository homepage URL from an upstream source archive URL.
+ * Works for GitHub, GitLab, and Codeberg archive patterns.
+ * Returns null if the pattern isn't recognised.
+ *
+ * Examples:
+ *   https://github.com/owner/repo/archive/v1.2.3.tar.gz  → https://github.com/owner/repo
+ *   https://gitlab.com/owner/repo/-/archive/1.2/...      → https://gitlab.com/owner/repo
+ */
+function repoUrl(upstream) {
+  if (!upstream) return null;
+  try {
+    const u = new URL(upstream);
+    const host = u.hostname.toLowerCase();
+    const parts = u.pathname.split('/').filter(Boolean);
+    // GitHub / Codeberg: owner/repo/archive/...
+    if (host === 'github.com' || host === 'codeberg.org') {
+      if (parts.length >= 3 && parts[2] === 'archive') {
+        return `${u.protocol}//${u.hostname}/${parts[0]}/${parts[1]}`;
+      }
+      if (parts.length >= 2) {
+        return `${u.protocol}//${u.hostname}/${parts[0]}/${parts[1]}`;
+      }
+    }
+    // GitLab: owner/repo/-/archive/...
+    if (host.includes('gitlab')) {
+      const archiveIdx = parts.indexOf('archive');
+      if (archiveIdx >= 2) {
+        return `${u.protocol}//${u.hostname}/${parts.slice(0, archiveIdx - 1).join('/')}`;
+      }
+    }
+    // SourceForge project page: sourceforge.net/projects/name/files/...
+    if (host === 'sourceforge.net' && parts[0] === 'projects' && parts.length >= 2) {
+      return `https://sourceforge.net/projects/${parts[1]}`;
+    }
+  } catch {}
+  return null;
+}
+
+/** Short display label for a repo URL (strips https:// prefix). */
+function repoLabel(url) {
+  return url.replace(/^https?:\/\//, '');
+}
+
 // ── Copy-to-clipboard button ───────────────────────────────────────────────
 
 document.addEventListener('click', e => {

@@ -184,8 +184,15 @@ async function loadPackage(name, channel) {
                 <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
               </li>
               ${pkg.license ? `<li><span class="label">License</span><span>${esc(pkg.license)}</span></li>` : ''}
-              ${latest.upstream_url ? `<li><span class="label">Source</span>
-                <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">upstream ↗</a>
+              ${(() => {
+                const repo = repoUrl(latest.upstream_url);
+                return repo
+                  ? `<li><span class="label">Repository</span>
+                     <a href="${esc(repo)}" target="_blank" style="font-size:12px">${esc(repoLabel(repo))} ↗</a></li>`
+                  : '';
+              })()}
+              ${latest.upstream_url ? `<li><span class="label">Archive</span>
+                <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">tarball ↗</a>
               </li>` : ''}
             </ul>
           </div>

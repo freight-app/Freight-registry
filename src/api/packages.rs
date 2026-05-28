@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use axum::{
     extract::{ConnectInfo, Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -60,7 +62,7 @@ async fn get_package_local(
     state: &Arc<AppState>,
     name: &str,
     channel: &str,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Value> {
     let (pkg, versions) = state
         .db
         .get_package(name, channel)
@@ -76,28 +78,25 @@ async fn get_package_local(
             .unwrap_or_default();
         let prebuilt_triples: Vec<&str> = prebuilts.iter().map(|p| p.triple.as_str()).collect();
         let deps: serde_json::Value = serde_json::from_str(&v.dependencies).unwrap_or(json!({}));
-        // For metadata-only packages, expose the upstream URL directly so clients
-        // can fetch the source archive without routing through the registry server.
         let effective_download_url = v.upstream_url.clone().unwrap_or(url);
         versions_json.push(json!({
-            "version":         v.version,
-            "checksum":        v.checksum,
-            "download_url":    effective_download_url,
-            "upstream_url":    v.upstream_url,
-            "build_system":    v.build_system,
-            "yanked":          v.yanked != 0,
-            "downloads":       v.downloads,
+            "version":          v.version,
+            "checksum":         v.checksum,
+            "download_url":     effective_download_url,
+            "upstream_url":     v.upstream_url,
+            "build_system":     v.build_system,
+            "yanked":           v.yanked != 0,
+            "downloads":        v.downloads,
             "prebuilt_triples": prebuilt_triples,
-            "dependencies":    deps,
+            "dependencies":     deps,
         }));
     }
 
-    // Parse comma-separated keywords into an array for the client.
     let keywords: Vec<&str> = pkg.keywords.as_deref()
         .map(|s| s.split(',').map(str::trim).filter(|k| !k.is_empty()).collect())
         .unwrap_or_default();
 
-    Ok(Json(json!({
+    Ok(json!({
         "name":        pkg.name,
         "channel":     pkg.channel,
         "description": pkg.description,
@@ -105,40 +104,72 @@ async fn get_package_local(
         "keywords":    keywords,
         "latest":      latest,
         "versions":    versions_json,
-    })))
+    }))
+}
+
+/// Compute a quoted ETag from arbitrary bytes: `"<sha256-hex>"`.
+fn make_etag(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("\"{}\"", hex::encode(Sha256::digest(data)))
 }
 
 pub async fn get_package(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req_headers: HeaderMap,
     Path(name): Path<String>,
     Query(params): Query<ChannelParam>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Response> {
     if state.limiters.api.check_key(&addr.ip()).is_err() {
         return Err(ApiError::too_many_requests());
     }
 
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
 
-    match get_package_local(&state, &name, channel).await {
-        Ok(resp) => return Ok(resp),
-        Err(ApiError(axum::http::StatusCode::NOT_FOUND, _)) => {}
+    let value = match get_package_local(&state, &name, channel).await {
+        Ok(v) => v,
+        Err(ApiError(StatusCode::NOT_FOUND, _)) => {
+            // Not found locally — try the mirror upstream if configured.
+            if let Some(ref upstream) = state.mirror_upstream {
+                let url = if channel == DEFAULT_CHANNEL {
+                    format!("{upstream}/api/v1/packages/{name}")
+                } else {
+                    format!("{upstream}/api/v1/packages/{name}?channel={channel}")
+                };
+                if let Some(body) = proxy_get_json(&url).await {
+                    // Mirror responses are passed through without ETag (we don't own them).
+                    return Ok(Json(body).into_response());
+                }
+            }
+            return Err(ApiError::not_found(format!("`{name}` not found in channel `{channel}`")));
+        }
         Err(e) => return Err(e),
-    }
+    };
 
-    // Not found locally — try the mirror upstream if configured.
-    if let Some(ref upstream) = state.mirror_upstream {
-        let url = if channel == DEFAULT_CHANNEL {
-            format!("{upstream}/api/v1/packages/{name}")
-        } else {
-            format!("{upstream}/api/v1/packages/{name}?channel={channel}")
-        };
-        if let Some(body) = proxy_get_json(&url).await {
-            return Ok(Json(body));
+    let body = serde_json::to_string(&value)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let etag = make_etag(body.as_bytes());
+
+    // Return 304 Not Modified if the client already has this version.
+    if let Some(inm) = req_headers.get(header::IF_NONE_MATCH) {
+        if inm.as_bytes() == etag.as_bytes() {
+            let mut resp = StatusCode::NOT_MODIFIED.into_response();
+            if let Ok(v) = HeaderValue::from_str(&etag) {
+                resp.headers_mut().insert(header::ETAG, v);
+            }
+            return Ok(resp);
         }
     }
 
-    Err(ApiError::not_found(format!("`{name}` not found in channel `{channel}`")))
+    let mut resp = (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        body,
+    ).into_response();
+    if let Ok(v) = HeaderValue::from_str(&etag) {
+        resp.headers_mut().insert(header::ETAG, v);
+    }
+    Ok(resp)
 }
 
 pub fn download_url(base_url: &str, name: &str, version: &str, channel: &str) -> String {

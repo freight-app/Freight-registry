@@ -7,9 +7,10 @@
 // ── API helpers ────────────────────────────────────────────────────────────
 
 const API = {
-  /** GET /api/v1/search?q=&limit=&offset= */
-  async search(q, { limit = 20, offset = 0 } = {}) {
-    const url = `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`;
+  /** GET /api/v1/search?q=&limit=&offset=&channel= */
+  async search(q, { limit = 20, offset = 0, channel = '' } = {}) {
+    let url = `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`;
+    if (channel) url += `&channel=${encodeURIComponent(channel)}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`Search failed: ${r.status}`);
     return r.json();   // { packages: [...], total: N, limit, offset }
@@ -79,16 +80,34 @@ function fmtDate(ts) {
   });
 }
 
+/**
+ * Map a build_system string to a short language label for the badge.
+ * Returns null when no useful label can be derived.
+ */
+function buildLabel(bs) {
+  if (!bs) return null;
+  const map = {
+    cmake: 'C/C++', make: 'C/C++', meson: 'C/C++', autotools: 'C/C++',
+    bazel: 'C/C++', scons: 'C/C++',
+    cargo: 'Rust', go: 'Go', maven: 'Java', gradle: 'Java',
+    npm: 'JS', yarn: 'JS', pip: 'Python', setuptools: 'Python',
+    fortran: 'Fortran', ada: 'Ada',
+  };
+  return map[bs.toLowerCase()] ?? bs;
+}
+
 /** Render a list of package cards into `el`. */
 function renderPackageCards(packages, el) {
   if (!packages || packages.length === 0) {
     el.innerHTML = '<div class="empty">No packages found.</div>';
     return;
   }
-  el.innerHTML = packages.map(pkg => {
+  const cards = packages.map(pkg => {
     const kws = (pkg.keywords || []).slice(0, 4)
       .map(k => `<a href="/?q=${encodeURIComponent(k)}" class="badge keyword" onclick="event.stopPropagation()">${esc(k)}</a>`).join('');
-    const dl = pkg.versions?.[0]?.downloads || pkg.downloads || 0;
+    const dl  = pkg.versions?.[0]?.downloads || pkg.downloads || 0;
+    const bs  = pkg.build_system || pkg.versions?.[0]?.build_system;
+    const lang = buildLabel(bs);
     return `
       <div class="pkg-card" onclick="location.href='/packages/${esc(pkg.name)}'">
         <div class="pkg-card-body">
@@ -96,6 +115,7 @@ function renderPackageCards(packages, el) {
           <p class="pkg-desc">${esc(pkg.description || '')}</p>
           <div class="pkg-meta">
             <span class="badge version">v${esc(pkg.latest)}</span>
+            ${lang ? `<span class="badge lang">${esc(lang)}</span>` : ''}
             ${pkg.channel && pkg.channel !== 'stable'
               ? `<span class="badge channel">${esc(pkg.channel)}</span>` : ''}
             ${dl ? `<span class="badge dl">↓ ${fmtNum(dl)}</span>` : ''}
@@ -104,6 +124,7 @@ function renderPackageCards(packages, el) {
         </div>
       </div>`;
   }).join('');
+  el.innerHTML = `<div class="pkg-grid">${cards}</div>`;
 }
 
 /** Render a spinner into `el`. */
@@ -190,4 +211,46 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+  setupNavAuth();
 });
+
+// ── Auth helpers ───────────────────────────────────────────────────────────
+
+const Auth = {
+  /** Return the stored session or null. */
+  session() {
+    try { return JSON.parse(localStorage.getItem('freight_session') || 'null'); }
+    catch { return null; }
+  },
+  /** Persist a session returned from /api/v1/users/login */
+  save(token, refreshToken, username, isAdmin) {
+    localStorage.setItem('freight_session', JSON.stringify(
+      { token, refreshToken, username, isAdmin }
+    ));
+  },
+  /** Remove the stored session. */
+  clear() { localStorage.removeItem('freight_session'); },
+  /** Authorization header value or null. */
+  bearer() {
+    const s = this.session();
+    return s ? `Bearer ${s.token}` : null;
+  },
+};
+
+/**
+ * Update the `#nav-auth` element based on stored session.
+ * Shows username (→ /account) when logged in, "Login" otherwise.
+ */
+function setupNavAuth() {
+  const el = document.getElementById('nav-auth');
+  if (!el) return;
+  const s = Auth.session();
+  if (s?.username) {
+    el.textContent = s.username;
+    el.href = '/account';
+    el.style.color = 'var(--text)';
+  } else {
+    el.textContent = 'Login';
+    el.href = '/login';
+  }
+}

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account — Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+</nav>
+
+<main id="main">
+  <div class="loading"><div class="spinner"></div></div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span><a href="/health">Status</a> · <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a></span>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const session = Auth.session();
+  if (!session) {
+    location.href = '/login?next=/account';
+    return;
+  }
+
+  const main = document.getElementById('main');
+
+  try {
+    const [me, tokens] = await Promise.all([
+      apiFetch('/api/v1/me'),
+      apiFetch('/api/v1/me/tokens'),
+    ]);
+
+    if (!me) { Auth.clear(); location.href = '/login'; return; }
+
+    document.title = `${me.login} — Freight Registry`;
+
+    const expiresIn = me.token_expires_in;
+    const expiresStr = expiresIn == null
+      ? 'never'
+      : `in ${Math.ceil(expiresIn / 86400)}d`;
+
+    main.innerHTML = `
+      <div class="account-grid">
+
+        <!-- ── Profile ── -->
+        <div class="account-section">
+          <h2>Profile</h2>
+          <div class="sidebar-box" style="max-width:420px">
+            <ul>
+              <li>
+                <span class="label">Username</span>
+                <strong>${esc(me.login)}</strong>
+              </li>
+              ${me.is_admin ? `<li>
+                <span class="label">Role</span>
+                <span class="badge" style="border-color:#7c3aed;color:#a78bfa">admin</span>
+              </li>` : ''}
+              <li>
+                <span class="label">Session</span>
+                <span style="color:var(--muted);font-size:13px">expires ${expiresStr}</span>
+              </li>
+            </ul>
+            <div style="margin-top:16px">
+              <button class="btn-danger" id="logout-btn">Sign out</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── API Tokens ── -->
+        <div class="account-section">
+          <h2>API tokens</h2>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+            Use these tokens in <code>~/.freight/credentials.toml</code> to publish packages.
+          </p>
+          <div id="tokens-list"></div>
+
+          <details style="margin-top:16px">
+            <summary style="cursor:pointer;color:var(--accent);font-size:14px">+ New token</summary>
+            <div class="sidebar-box" style="margin-top:12px;max-width:420px">
+              <form id="new-token-form">
+                <label class="field-label" for="t-name">Token name</label>
+                <input id="t-name" type="text" placeholder="e.g. ci-publish" required maxlength="64">
+
+                <label class="field-label" for="t-scope">Scope</label>
+                <select id="t-scope">
+                  <option value="publish">publish</option>
+                  <option value="read">read</option>
+                  <option value="admin">admin</option>
+                </select>
+
+                <label class="field-label" for="t-expires">Expires in (days, blank = never)</label>
+                <input id="t-expires" type="number" min="1" max="365" placeholder="90">
+
+                <button type="submit" class="btn-primary" id="t-btn" style="margin-top:8px">Create</button>
+              </form>
+              <div id="new-token-result" style="margin-top:12px"></div>
+            </div>
+          </details>
+        </div>
+
+      </div>`;
+
+    renderTokens(tokens?.tokens ?? []);
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      Auth.clear();
+      location.href = '/';
+    });
+    document.getElementById('new-token-form').addEventListener('submit', createToken);
+
+  } catch (err) {
+    main.innerHTML = `<div class="error">Failed to load account: ${esc(err.message)}</div>`;
+  }
+});
+
+// ── Token list ─────────────────────────────────────────────────────────────
+
+function renderTokens(tokens) {
+  const el = document.getElementById('tokens-list');
+  if (!el) return;
+  if (tokens.length === 0) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px">No API tokens yet.</p>';
+    return;
+  }
+  el.innerHTML = `<table style="max-width:560px">
+    <thead><tr>
+      <th>Name</th><th>Scope</th><th>Expires</th><th></th>
+    </tr></thead>
+    <tbody>
+      ${tokens.map(t => `
+        <tr>
+          <td style="font-family:var(--font-mono);font-size:13px">${esc(t.name)}</td>
+          <td><span class="badge">${esc(t.scope)}</span></td>
+          <td style="color:var(--muted);font-size:12px">${t.expires_at ? fmtDate(t.expires_at) : '—'}</td>
+          <td>
+            <button class="btn-danger btn-sm" onclick="revokeToken('${esc(t.name)}')">Revoke</button>
+          </td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function revokeToken(name) {
+  if (!confirm(`Revoke token "${name}"?`)) return;
+  try {
+    const r = await apiFetch(`/api/v1/me/tokens/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (r !== null) {
+      const tokens = await apiFetch('/api/v1/me/tokens');
+      renderTokens(tokens?.tokens ?? []);
+    }
+  } catch {}
+}
+
+async function createToken(e) {
+  e.preventDefault();
+  const btn     = document.getElementById('t-btn');
+  const name    = document.getElementById('t-name').value.trim();
+  const scope   = document.getElementById('t-scope').value;
+  const days    = parseInt(document.getElementById('t-expires').value, 10) || null;
+  if (!name) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const r = await fetch('/api/v1/me/tokens', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': Auth.bearer(),
+      },
+      body: JSON.stringify({ name, scope, expires_days: days }),
+    });
+    const data = await r.json();
+    const res  = document.getElementById('new-token-result');
+    if (!r.ok) {
+      res.innerHTML = `<div class="msg-err">${esc(data.errors?.[0]?.detail ?? `Error ${r.status}`)}</div>`;
+    } else {
+      res.innerHTML = `
+        <p style="font-size:13px;color:var(--muted);margin:0 0 6px">Copy this token now — it won't be shown again.</p>
+        <div class="install-box" style="margin:0">
+          <code id="new-token-val">${esc(data.token)}</code>
+          <button class="copy-btn" data-copy="${esc(data.token)}">Copy</button>
+        </div>`;
+      const tokens = await apiFetch('/api/v1/me/tokens');
+      renderTokens(tokens?.tokens ?? []);
+    }
+  } catch {
+    document.getElementById('new-token-result').innerHTML =
+      '<div class="msg-err">Network error.</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create';
+  }
+}
+
+// ── Fetch helper with auth ─────────────────────────────────────────────────
+
+async function apiFetch(url, opts = {}) {
+  const bearer = Auth.bearer();
+  if (!bearer) return null;
+  const r = await fetch(url, {
+    ...opts,
+    headers: { 'Authorization': bearer, ...(opts.headers ?? {}) },
+  });
+  if (r.status === 401) { Auth.clear(); location.href = '/login'; return null; }
+  if (r.status === 204 || r.status === 200 && r.headers.get('content-length') === '0') return {};
+  return r.json().catch(() => ({}));
+}
+</script>
+</body>
+</html>

@@ -152,6 +152,9 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // /                → index.html    (search + hero)
         // /style.css, /app.js, etc. → served by ServeDir fallback
         .route("/packages/:_name", get(|()| serve_page("package.html")))
+        .route("/login",           get(|()| serve_page("login.html")))
+        .route("/register",        get(|()| serve_page("register.html")))
+        .route("/account",         get(|()| serve_page("account.html")))
         .fallback_service({
             let dir = static_dir();
             ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")))

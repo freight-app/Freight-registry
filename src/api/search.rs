@@ -47,16 +47,22 @@ pub async fn search_packages(
             let latest = latest?;
             local_names.insert(pkg.name.to_lowercase());
             let url = download_url(&state.base_url, &pkg.name, &latest.version, channel);
+            let keywords: Vec<&str> = pkg.keywords.as_deref()
+                .map(|s| s.split(',').map(str::trim).filter(|k| !k.is_empty()).collect())
+                .unwrap_or_default();
             Some(json!({
-                "name":        pkg.name,
-                "channel":     pkg.channel,
-                "description": pkg.description,
-                "latest":      latest.version,
-                "downloads":   latest.downloads,
+                "name":         pkg.name,
+                "channel":      pkg.channel,
+                "description":  pkg.description,
+                "latest":       latest.version,
+                "downloads":    latest.downloads,
+                "keywords":     keywords,
+                "build_system": latest.build_system,
                 "versions": [{
-                    "version":      latest.version,
-                    "checksum":     latest.checksum,
-                    "download_url": url,
+                    "version":       latest.version,
+                    "checksum":      latest.checksum,
+                    "download_url":  url,
+                    "build_system":  latest.build_system,
                 }],
             }))
         })

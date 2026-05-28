@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register — Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search"></div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+</nav>
+
+<main style="max-width:420px">
+  <div id="msg"></div>
+
+  <div class="auth-card">
+    <h2>Create account</h2>
+    <form id="register-form" autocomplete="on">
+      <label class="field-label" for="r-username">Username</label>
+      <input id="r-username" type="text" autocomplete="username"
+             placeholder="lowercase, 3–32 chars" required minlength="3" maxlength="32">
+
+      <label class="field-label" for="r-email">
+        Email <span style="color:var(--muted);font-weight:400">(optional)</span>
+      </label>
+      <input id="r-email" type="email" autocomplete="email" placeholder="you@example.com">
+
+      <label class="field-label" for="r-password">Password</label>
+      <input id="r-password" type="password" autocomplete="new-password"
+             placeholder="at least 8 characters" required minlength="8">
+
+      <label class="field-label" for="r-confirm">Confirm password</label>
+      <input id="r-confirm" type="password" autocomplete="new-password"
+             placeholder="repeat password" required>
+
+      <button type="submit" class="btn-primary" id="r-btn">Create account</button>
+    </form>
+    <div class="auth-footer">
+      Already have an account? <a href="/login">Sign in</a>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span><a href="/health">Status</a> · <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a></span>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+document.getElementById('register-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn     = document.getElementById('r-btn');
+  const user    = document.getElementById('r-username').value.trim();
+  const email   = document.getElementById('r-email').value.trim();
+  const pass    = document.getElementById('r-password').value;
+  const confirm = document.getElementById('r-confirm').value;
+
+  clearMsg();
+
+  if (pass !== confirm) { showErr('Passwords do not match.'); return; }
+  if (pass.length < 8)  { showErr('Password must be at least 8 characters.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const body = { username: user, password: pass };
+    if (email) body.email = email;
+
+    const r = await fetch('/api/v1/users/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      showErr(data.errors?.[0]?.detail ?? `Error ${r.status}`);
+      return;
+    }
+    // Redirect to login with a success flash
+    location.href = '/login?registered=1';
+  } catch (err) {
+    showErr('Network error — is the registry reachable?');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create account';
+  }
+});
+
+function clearMsg() { document.getElementById('msg').innerHTML = ''; }
+function showErr(t) { document.getElementById('msg').innerHTML = `<div class="msg-err">${esc(t)}</div>`; }
+</script>
+</body>
+</html>

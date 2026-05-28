@@ -24,6 +24,7 @@
   <div class="nav-links">
     <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
     <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
   </div>
 </nav>
 
@@ -41,6 +42,23 @@
 <div id="stats-bar" class="stats-bar"></div>
 
 <main>
+  <!-- Filter bar (shown when a query is active or on browse) -->
+  <div id="filter-bar" class="filter-bar" style="display:none">
+    <span class="filter-label">Channel:</span>
+    <div class="filter-group" id="channel-btns">
+      <button class="filter-btn active" data-channel="stable">stable</button>
+      <button class="filter-btn" data-channel="experimental">experimental</button>
+      <button class="filter-btn" data-channel="">all</button>
+    </div>
+    <span class="filter-label" style="margin-left:16px">Build:</span>
+    <div class="filter-group" id="build-btns">
+      <button class="filter-btn active" data-build="">any</button>
+      <button class="filter-btn" data-build="cmake">cmake</button>
+      <button class="filter-btn" data-build="make">make</button>
+      <button class="filter-btn" data-build="meson">meson</button>
+      <button class="filter-btn" data-build="autotools">autotools</button>
+    </div>
+  </div>
   <!-- Results area -->
   <div id="results"></div>
   <div id="pagination" class="pagination"></div>
@@ -59,9 +77,11 @@
 'use strict';
 
 const PAGE_SIZE = 20;
-let currentPage = 0;
-let currentQuery = '';
-let totalResults = 0;
+let currentPage    = 0;
+let currentQuery   = '';
+let currentChannel = 'stable';
+let currentBuild   = '';
+let totalResults   = 0;
 
 // ── Initialise ──────────────────────────────────────────────────────────────
 
@@ -71,21 +91,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Enter') doSearch();
   });
 
+  // Filter button wiring
+  document.querySelectorAll('#channel-btns .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#channel-btns .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentChannel = btn.dataset.channel;
+      performSearch(currentQuery, 0);
+    });
+  });
+  document.querySelectorAll('#build-btns .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#build-btns .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentBuild = btn.dataset.build;
+      performSearch(currentQuery, 0);
+    });
+  });
+
   // Parse ?q= from URL
   const params = new URLSearchParams(location.search);
   const q = params.get('q') ?? '';
   if (q) {
     document.getElementById('hero-q').value = q;
     document.getElementById('nav-q').value  = q;
+    showFilters();
     performSearch(q, 0);
     document.getElementById('hero').style.display = 'none';
   } else {
     // No query: show featured / recent packages
+    showFilters();
     loadFeatured();
   }
 
   loadStats();
 });
+
+function showFilters() {
+  document.getElementById('filter-bar').style.display = '';
+}
 
 // ── Search ─────────────────────────────────────────────────────────────────
 
@@ -95,6 +139,7 @@ function doSearch() {
   if (!q) return;
   history.pushState({}, '', `/?q=${encodeURIComponent(q)}`);
   document.getElementById('hero').style.display = 'none';
+  showFilters();
   performSearch(q, 0);
 }
 
@@ -105,9 +150,19 @@ async function performSearch(q, offset) {
   setLoading(el);
   document.getElementById('pagination').innerHTML = '';
   try {
-    const data = await API.search(q, { limit: PAGE_SIZE, offset });
+    const opts = { limit: PAGE_SIZE, offset };
+    if (currentChannel) opts.channel = currentChannel;
+    if (currentBuild)   opts.build   = currentBuild;
+    const data = await API.search(q, opts);
     totalResults = data.total ?? data.packages.length;
-    renderPackageCards(data.packages, el);
+    // Client-side build filter (server doesn't support it yet — filter locally)
+    const filtered = currentBuild
+      ? data.packages.filter(p => {
+          const bs = p.build_system || p.versions?.[0]?.build_system || '';
+          return (bs || '').toLowerCase() === currentBuild.toLowerCase();
+        })
+      : data.packages;
+    renderPackageCards(filtered, el);
     renderPagination();
   } catch (err) {
     setError(el, `Search error: ${err.message}`);
@@ -133,7 +188,9 @@ async function loadFeatured() {
   const el = document.getElementById('results');
   setLoading(el);
   try {
-    const data = await API.search('', { limit: PAGE_SIZE });
+    const opts = { limit: PAGE_SIZE };
+    if (currentChannel) opts.channel = currentChannel;
+    const data = await API.search('', opts);
     totalResults = data.total ?? 0;
     if (data.packages.length === 0) {
       el.innerHTML = `<div class="empty" style="padding-top:16px">

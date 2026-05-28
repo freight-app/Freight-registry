@@ -24,6 +24,7 @@
   <div class="nav-links">
     <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
     <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
   </div>
 </nav>
 
@@ -240,17 +241,6 @@ async function loadPackage(name, channel, selectedVersion) {
               ${ownerList.map(o => `<li><span>${esc(o)}</span></li>`).join('')}
             </ul>
           </div>` : ''}
-
-          <div class="sidebar-box">
-            <h3>Install</h3>
-            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">
-              Add to <code>freight.toml</code>:
-            </p>
-            <div style="background:var(--code-bg);border-radius:4px;padding:8px 12px">
-              <code style="font-family:var(--font-mono);font-size:12px;color:var(--green)">[dependencies]<br>
-              ${installLine}</code>
-            </div>
-          </div>
 
           <div class="sidebar-box">
             <h3>Quick links</h3>

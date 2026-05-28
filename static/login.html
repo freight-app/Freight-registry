@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search"></div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+</nav>
+
+<main style="max-width:420px">
+  <div id="msg"></div>
+
+  <!-- Login form -->
+  <div id="form-login" class="auth-card">
+    <h2>Sign in</h2>
+    <form id="login-form" autocomplete="on">
+      <label class="field-label" for="l-username">Username</label>
+      <input id="l-username" type="text" autocomplete="username" placeholder="username" required>
+
+      <label class="field-label" for="l-password">Password</label>
+      <input id="l-password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+
+      <button type="submit" class="btn-primary" id="l-btn">Sign in</button>
+    </form>
+    <div class="auth-footer">
+      No account? <a href="/register">Register</a>
+      · <a href="#" id="forgot-link">Forgot password</a>
+    </div>
+  </div>
+
+  <!-- Forgot-password form (hidden by default) -->
+  <div id="form-forgot" class="auth-card" style="display:none">
+    <h2>Reset password</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+      Enter your username. If an email is on file, a reset link will be sent.
+    </p>
+    <form id="forgot-form">
+      <label class="field-label" for="f-username">Username</label>
+      <input id="f-username" type="text" placeholder="username" required>
+      <button type="submit" class="btn-primary" id="f-btn">Send reset link</button>
+    </form>
+    <div class="auth-footer"><a href="#" id="back-login">← Back to sign in</a></div>
+  </div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span><a href="/health">Status</a> · <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a></span>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+// Show success message if redirected here after registration
+const params = new URLSearchParams(location.search);
+if (params.get('registered') === '1') {
+  document.getElementById('msg').innerHTML =
+    '<div class="msg-ok">Account created! Sign in below.</div>';
+}
+
+// ── Login ──────────────────────────────────────────────────────────────────
+
+document.getElementById('login-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn  = document.getElementById('l-btn');
+  const user = document.getElementById('l-username').value.trim();
+  const pass = document.getElementById('l-password').value;
+  if (!user || !pass) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+  clearMsg();
+
+  try {
+    const r = await fetch('/api/v1/users/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, password: pass }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      showErr(data.errors?.[0]?.detail ?? `Error ${r.status}`);
+      return;
+    }
+    Auth.save(data.token, data.refresh_token, user, false);
+    // Redirect to account or the page they came from
+    const next = params.get('next') ?? '/account';
+    location.href = next;
+  } catch (err) {
+    showErr('Network error — is the registry reachable?');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign in';
+  }
+});
+
+// ── Forgot password ────────────────────────────────────────────────────────
+
+document.getElementById('forgot-link').addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('form-login').style.display  = 'none';
+  document.getElementById('form-forgot').style.display = '';
+});
+document.getElementById('back-login').addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('form-forgot').style.display = 'none';
+  document.getElementById('form-login').style.display  = '';
+});
+
+document.getElementById('forgot-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn  = document.getElementById('f-btn');
+  const user = document.getElementById('f-username').value.trim();
+  if (!user) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  clearMsg();
+
+  try {
+    await fetch('/api/v1/users/reset-password/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user }),
+    });
+    // Always show success to avoid username enumeration
+    showOk('If an email is registered, a reset link was sent.');
+    document.getElementById('form-forgot').style.display = 'none';
+    document.getElementById('form-login').style.display  = '';
+  } catch {
+    showErr('Network error.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send reset link';
+  }
+});
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function clearMsg() { document.getElementById('msg').innerHTML = ''; }
+function showErr(t) { document.getElementById('msg').innerHTML = `<div class="msg-err">${esc(t)}</div>`; }
+function showOk(t)  { document.getElementById('msg').innerHTML = `<div class="msg-ok">${esc(t)}</div>`; }
+</script>
+</body>
+</html>

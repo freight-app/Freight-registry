@@ -92,11 +92,17 @@ async fn get_package_local(
         }));
     }
 
+    // Parse comma-separated keywords into an array for the client.
+    let keywords: Vec<&str> = pkg.keywords.as_deref()
+        .map(|s| s.split(',').map(str::trim).filter(|k| !k.is_empty()).collect())
+        .unwrap_or_default();
+
     Ok(Json(json!({
         "name":        pkg.name,
         "channel":     pkg.channel,
         "description": pkg.description,
         "license":     pkg.license,
+        "keywords":    keywords,
         "latest":      latest,
         "versions":    versions_json,
     })))

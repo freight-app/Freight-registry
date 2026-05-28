@@ -109,6 +109,11 @@ pub async fn publish(
     } else {
         extract_dependencies(tarball)
     };
+    let keywords = if is_metadata_only {
+        None
+    } else {
+        extract_keywords(tarball)
+    };
     let readme = if is_metadata_only {
         None
     } else {
@@ -137,6 +142,7 @@ pub async fn publish(
             channel,
             meta.description.as_deref(),
             meta.license.as_deref(),
+            keywords.as_deref(),
             &meta.vers,
             &checksum,
             &dependencies,
@@ -231,6 +237,30 @@ fn extract_dependencies_inner(tarball: &[u8]) -> Option<HashMap<String, String>>
         return Some(deps);
     }
     None
+}
+
+/// Extract `package.keywords` from `freight.toml` in the tarball.
+/// Returns a comma-separated string or `None` if not present / empty.
+fn extract_keywords(tarball: &[u8]) -> Option<String> {
+    let content = extract_file(tarball, "freight.toml")?;
+
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        package: Option<PackageMeta>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PackageMeta {
+        #[serde(default)]
+        keywords: Vec<String>,
+    }
+
+    let manifest: Manifest = toml::from_str(&content).ok()?;
+    let kws = manifest.package?.keywords;
+    let kws: Vec<String> = kws.iter()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect();
+    if kws.is_empty() { None } else { Some(kws.join(",")) }
 }
 
 fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {

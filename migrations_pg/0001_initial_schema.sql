@@ -1,16 +1,15 @@
 -- freight-registry complete schema — PostgreSQL dialect.
--- Uses CITEXT for case-insensitive columns (equiv. to SQLite's COLLATE NOCASE).
+-- Uses lower() functional indexes for case-insensitive uniqueness so that
+-- sqlx's AnyPool can decode all columns as plain TEXT/BIGINT.
 -- Timestamps are stored as BIGINT (Unix seconds) to stay compatible with the
 -- SQLite schema so the same Rust code works against both backends.
-
-CREATE EXTENSION IF NOT EXISTS citext;
 
 -- ── Users ──────────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS users (
     id             BIGSERIAL PRIMARY KEY,
-    username       CITEXT    NOT NULL UNIQUE,
-    email          CITEXT    UNIQUE,
+    username       TEXT      NOT NULL,
+    email          TEXT,
     password_hash  TEXT      NOT NULL,
     is_admin       INTEGER   NOT NULL DEFAULT 0,
     email_verified INTEGER   NOT NULL DEFAULT 0,
@@ -18,15 +17,18 @@ CREATE TABLE IF NOT EXISTS users (
     totp_enabled   INTEGER   NOT NULL DEFAULT 0,
     created_at     BIGINT    NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_ci ON users(lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_ci    ON users(lower(email)) WHERE email IS NOT NULL;
 
 -- ── Organisations ──────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS organizations (
     id          BIGSERIAL PRIMARY KEY,
-    name        CITEXT    NOT NULL UNIQUE,
+    name        TEXT      NOT NULL,
     description TEXT,
     created_at  BIGINT    NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_name_ci ON organizations(lower(name));
 
 CREATE TABLE IF NOT EXISTS org_members (
     org_id  BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -41,16 +43,15 @@ CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
 
 CREATE TABLE IF NOT EXISTS packages (
     id          BIGSERIAL PRIMARY KEY,
-    name        CITEXT    NOT NULL,
-    channel     CITEXT    NOT NULL DEFAULT 'stable',
+    name        TEXT      NOT NULL,
+    channel     TEXT      NOT NULL DEFAULT 'stable',
     description TEXT,
     license     TEXT,
     keywords    TEXT,                          -- comma-separated, e.g. "math,geometry"
     org_id      BIGINT    REFERENCES organizations(id) ON DELETE SET NULL,
-    created_at  BIGINT    NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT),
-    UNIQUE(name, channel)
+    created_at  BIGINT    NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
 );
-
+CREATE UNIQUE INDEX IF NOT EXISTS idx_packages_name_channel_ci ON packages(lower(name), lower(channel));
 CREATE INDEX IF NOT EXISTS idx_packages_org ON packages(org_id);
 
 CREATE TABLE IF NOT EXISTS versions (
@@ -77,8 +78,8 @@ CREATE TABLE IF NOT EXISTS package_owners (
 
 CREATE TABLE IF NOT EXISTS prebuilts (
     id         BIGSERIAL PRIMARY KEY,
-    name       CITEXT    NOT NULL,
-    channel    CITEXT    NOT NULL DEFAULT 'stable',
+    name       TEXT      NOT NULL,
+    channel    TEXT      NOT NULL DEFAULT 'stable',
     version    TEXT      NOT NULL,
     triple     TEXT      NOT NULL,             -- e.g. "x86_64-linux-gnu"
     checksum   TEXT      NOT NULL,

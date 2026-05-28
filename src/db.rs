@@ -12,6 +12,33 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
+/// Rewrite SQL for the Postgres backend:
+/// - `?` placeholders → `$1`, `$2`, …
+/// - `INSERT OR IGNORE INTO` → `INSERT INTO … ON CONFLICT DO NOTHING`
+pub fn pg_sql(sql: &str) -> String {
+    let (sql, insert_ignore) = if sql.contains("OR IGNORE ") {
+        (std::borrow::Cow::Owned(sql.replace("OR IGNORE ", "")), true)
+    } else {
+        (std::borrow::Cow::Borrowed(sql), false)
+    };
+    let mut out = String::with_capacity(sql.len() + 20);
+    let mut n = 0usize;
+    for ch in sql.chars() {
+        if ch == '?' {
+            n += 1;
+            out.push('$');
+            out.push_str(&n.to_string());
+        } else {
+            out.push(ch);
+        }
+    }
+    if insert_ignore {
+        out.push_str(" ON CONFLICT DO NOTHING");
+    }
+    out
+}
+
+
 // ── Row types ─────────────────────────────────────────────────────────────────
 
 #[derive(FromRow, Clone)]
@@ -134,6 +161,12 @@ impl Db {
         Ok(())
     }
 
+    /// Rewrite SQL for the active backend.
+    fn q_sql(&self, sql: &str) -> String {
+        if self.is_postgres { pg_sql(sql) } else { sql.to_owned() }
+    }
+
+
     /// Open an in-memory SQLite database. Only for use in tests.
     #[doc(hidden)]
     pub async fn open_memory() -> Result<Self> {
@@ -192,11 +225,9 @@ impl Db {
     // ── Users ──────────────────────────────────────────────────────────────────
 
     pub async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRow>> {
-        let row = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let row = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users WHERE lower(email) = lower(?)",
-        )
+             FROM users WHERE lower(email) = lower(?)"))
         .bind(email)
         .fetch_optional(&self.pool)
         .await?;
@@ -209,9 +240,7 @@ impl Db {
         email: Option<&str>,
         password_hash: &str,
     ) -> Result<i64> {
-        let id = sqlx::query_scalar(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-        )
+        let id = sqlx::query_scalar(&self.q_sql("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id"))
         .bind(username)
         .bind(email)
         .bind(password_hash)
@@ -221,11 +250,9 @@ impl Db {
     }
 
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<UserRow>> {
-        let row = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let row = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users WHERE lower(username) = lower(?)",
-        )
+             FROM users WHERE lower(username) = lower(?)"))
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
@@ -233,11 +260,9 @@ impl Db {
     }
 
     pub async fn get_user_by_id(&self, id: i64) -> Result<Option<UserRow>> {
-        let row = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let row = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users WHERE id = ?",
-        )
+             FROM users WHERE id = ?"))
         .bind(id)
         .fetch_optional(&self.pool)
         .await?;
@@ -245,11 +270,9 @@ impl Db {
     }
 
     pub async fn list_users(&self) -> Result<Vec<UserRow>> {
-        let rows = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let rows = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users ORDER BY username",
-        )
+             FROM users ORDER BY username"))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -273,13 +296,11 @@ impl Db {
         provider: &str,
         provider_id: &str,
     ) -> Result<Option<UserRow>> {
-        let row = sqlx::query_as(
-            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
+        let row = sqlx::query_as(&self.q_sql("SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
                     u.email_verified, u.totp_secret, u.totp_enabled
              FROM users u
              JOIN oauth_accounts o ON o.user_id = u.id
-             WHERE o.provider = ? AND o.provider_id = ?",
-        )
+             WHERE o.provider = ? AND o.provider_id = ?"))
         .bind(provider)
         .bind(provider_id)
         .fetch_optional(&self.pool)
@@ -295,10 +316,8 @@ impl Db {
         provider_id: &str,
         login:       &str,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, login)
-             VALUES (?, ?, ?, ?)",
-        )
+        sqlx::query(&self.q_sql("INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, login)
+             VALUES (?, ?, ?, ?)"))
         .bind(user_id)
         .bind(provider)
         .bind(provider_id)
@@ -372,7 +391,7 @@ impl Db {
     }
 
     pub async fn delete_user(&self, username: &str) -> Result<bool> {
-        let n = sqlx::query("DELETE FROM users WHERE lower(username) = lower(?)")
+        let n = sqlx::query(&self.q_sql("DELETE FROM users WHERE lower(username) = lower(?)"))
             .bind(username)
             .execute(&self.pool)
             .await?
@@ -381,9 +400,7 @@ impl Db {
     }
 
     pub async fn set_admin(&self, username: &str, is_admin: bool) -> Result<bool> {
-        let n = sqlx::query(
-            "UPDATE users SET is_admin = ? WHERE lower(username) = lower(?)",
-        )
+        let n = sqlx::query(&self.q_sql("UPDATE users SET is_admin = ? WHERE lower(username) = lower(?)"))
         .bind(is_admin as i64)
         .bind(username)
         .execute(&self.pool)
@@ -393,7 +410,7 @@ impl Db {
     }
 
     pub async fn set_email_verified(&self, user_id: i64) -> Result<()> {
-        sqlx::query("UPDATE users SET email_verified = 1 WHERE id = ?")
+        sqlx::query(&self.q_sql("UPDATE users SET email_verified = 1 WHERE id = ?"))
             .bind(user_id)
             .execute(&self.pool)
             .await?;
@@ -401,7 +418,7 @@ impl Db {
     }
 
     pub async fn set_password_hash(&self, user_id: i64, hash: &str) -> Result<()> {
-        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        sqlx::query(&self.q_sql("UPDATE users SET password_hash = ? WHERE id = ?"))
             .bind(hash)
             .bind(user_id)
             .execute(&self.pool)
@@ -410,7 +427,7 @@ impl Db {
     }
 
     pub async fn set_totp_secret(&self, user_id: i64, secret: Option<&str>) -> Result<()> {
-        sqlx::query("UPDATE users SET totp_secret = ? WHERE id = ?")
+        sqlx::query(&self.q_sql("UPDATE users SET totp_secret = ? WHERE id = ?"))
             .bind(secret)
             .bind(user_id)
             .execute(&self.pool)
@@ -419,7 +436,7 @@ impl Db {
     }
 
     pub async fn enable_totp(&self, user_id: i64, enabled: bool) -> Result<()> {
-        sqlx::query("UPDATE users SET totp_enabled = ? WHERE id = ?")
+        sqlx::query(&self.q_sql("UPDATE users SET totp_enabled = ? WHERE id = ?"))
             .bind(enabled as i64)
             .bind(user_id)
             .execute(&self.pool)
@@ -443,15 +460,13 @@ impl Db {
             unix_now() + 24 * 3_600    // verify tokens valid 24 hours
         };
         // Only one pending token per user per kind.
-        sqlx::query("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?")
+        sqlx::query(&self.q_sql("DELETE FROM email_tokens WHERE user_id = ? AND kind = ?"))
             .bind(user_id)
             .bind(kind)
             .execute(&self.pool)
             .await?;
-        sqlx::query(
-            "INSERT INTO email_tokens (user_id, kind, token_hash, expires_at)
-             VALUES (?, ?, ?, ?)",
-        )
+        sqlx::query(&self.q_sql("INSERT INTO email_tokens (user_id, kind, token_hash, expires_at)
+             VALUES (?, ?, ?, ?)"))
         .bind(user_id)
         .bind(kind)
         .bind(&hash)
@@ -466,10 +481,8 @@ impl Db {
     pub async fn consume_email_token(&self, token: &str, kind: &str) -> Result<Option<i64>> {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let now = unix_now();
-        let row: Option<(i64, i64)> = sqlx::query_as(
-            "SELECT id, user_id FROM email_tokens
-             WHERE token_hash = ? AND kind = ? AND expires_at > ?",
-        )
+        let row: Option<(i64, i64)> = sqlx::query_as(&self.q_sql("SELECT id, user_id FROM email_tokens
+             WHERE token_hash = ? AND kind = ? AND expires_at > ?"))
         .bind(&hash)
         .bind(kind)
         .bind(now)
@@ -477,7 +490,7 @@ impl Db {
         .await?;
 
         let Some((id, user_id)) = row else { return Ok(None) };
-        sqlx::query("DELETE FROM email_tokens WHERE id = ?")
+        sqlx::query(&self.q_sql("DELETE FROM email_tokens WHERE id = ?"))
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -503,10 +516,8 @@ impl Db {
         let token = hex::encode(bytes);
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let expires_at = expires_days.map(|d| unix_now() + d * 86_400);
-        sqlx::query(
-            "INSERT INTO tokens (user_id, name, kind, scope, token_hash, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
+        sqlx::query(&self.q_sql("INSERT INTO tokens (user_id, name, kind, scope, token_hash, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)"))
         .bind(user_id)
         .bind(name)
         .bind(kind)
@@ -524,10 +535,8 @@ impl Db {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let now = unix_now();
 
-        let tok: Option<TokenRow> = sqlx::query_as(
-            "SELECT id, user_id, name, kind, scope, expires_at, last_used
-             FROM tokens WHERE token_hash = ?",
-        )
+        let tok: Option<TokenRow> = sqlx::query_as(&self.q_sql("SELECT id, user_id, name, kind, scope, expires_at, last_used
+             FROM tokens WHERE token_hash = ?"))
         .bind(&hash)
         .fetch_optional(&self.pool)
         .await?;
@@ -541,19 +550,18 @@ impl Db {
         // Update last_used — not critical, fire and forget.
         let pool = self.pool.clone();
         let tid = tok.id;
+        let sql_last_used = self.q_sql("UPDATE tokens SET last_used = ? WHERE id = ?");
         tokio::spawn(async move {
-            let _ = sqlx::query("UPDATE tokens SET last_used = ? WHERE id = ?")
+            let _ = sqlx::query(&sql_last_used)
                 .bind(now)
                 .bind(tid)
                 .execute(&pool)
                 .await;
         });
 
-        let user: UserRow = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let user: UserRow = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users WHERE id = ?",
-        )
+             FROM users WHERE id = ?"))
         .bind(tok.user_id)
         .fetch_one(&self.pool)
         .await?;
@@ -563,21 +571,17 @@ impl Db {
 
     pub async fn list_tokens(&self, user_id: Option<i64>) -> Result<Vec<TokenWithUser>> {
         if let Some(uid) = user_id {
-            sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
+            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
-                 WHERE t.user_id = ? ORDER BY t.created_at",
-            )
+                 WHERE t.user_id = ? ORDER BY t.created_at"))
             .bind(uid)
             .fetch_all(&self.pool)
             .await
             .map_err(Into::into)
         } else {
-            sqlx::query_as(
-                "SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
+            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
                  FROM tokens t JOIN users u ON u.id = t.user_id
-                 ORDER BY u.username, t.created_at",
-            )
+                 ORDER BY u.username, t.created_at"))
             .fetch_all(&self.pool)
             .await
             .map_err(Into::into)
@@ -585,7 +589,7 @@ impl Db {
     }
 
     pub async fn revoke_token(&self, user_id: i64, name: &str) -> Result<bool> {
-        let n = sqlx::query("DELETE FROM tokens WHERE user_id = ? AND name = ?")
+        let n = sqlx::query(&self.q_sql("DELETE FROM tokens WHERE user_id = ? AND name = ?"))
             .bind(user_id)
             .bind(name)
             .execute(&self.pool)
@@ -598,17 +602,15 @@ impl Db {
 
     /// Returns `true` if the database is reachable.
     pub async fn ping(&self) -> bool {
-        sqlx::query_scalar::<_, i64>("SELECT 1")
+        sqlx::query_scalar::<_, i64>(&self.q_sql("SELECT 1"))
             .fetch_one(&self.pool)
             .await
             .is_ok()
     }
 
     pub async fn get_package(&self, name: &str, channel: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
-        let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description, license, keywords FROM packages \
-             WHERE lower(name) = lower(?) AND channel = ?",
-        )
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages \
+             WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(name)
         .bind(channel)
         .fetch_optional(&self.pool)
@@ -616,11 +618,9 @@ impl Db {
 
         let Some(pkg) = pkg else { return Ok(None) };
 
-        let versions: Vec<VersionRow> = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads, dependencies,
+        let versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
                     upstream_url, build_system FROM versions
-             WHERE package_id = ? ORDER BY created_at DESC",
-        )
+             WHERE package_id = ? ORDER BY created_at DESC"))
         .bind(pkg.id)
         .fetch_all(&self.pool)
         .await?;
@@ -630,12 +630,10 @@ impl Db {
 
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
-        let row = sqlx::query_as(
-            "SELECT version, checksum, yanked, downloads, dependencies,
+        let row = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
                     upstream_url, build_system FROM versions
              WHERE version = ?
-               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
-        )
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"))
         .bind(version)
         .bind(name)
         .bind(channel)
@@ -650,12 +648,13 @@ impl Db {
         let name = name.to_string();
         let version = version.to_string();
         let channel = channel.to_string();
+        let sql_dl = pg_sql(
+            "UPDATE versions SET downloads = downloads + 1
+             WHERE version = ?
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
+        );
         tokio::spawn(async move {
-            let _ = sqlx::query(
-                "UPDATE versions SET downloads = downloads + 1
-                 WHERE version = ?
-                   AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
-            )
+            let _ = sqlx::query(&sql_dl)
             .bind(&version)
             .bind(&name)
             .bind(&channel)
@@ -666,7 +665,7 @@ impl Db {
 
     /// Hard-delete a package and all its versions (cascade). Returns `false` if not found.
     pub async fn delete_package(&self, name: &str, channel: &str) -> Result<bool> {
-        let n = sqlx::query("DELETE FROM packages WHERE lower(name) = lower(?) AND channel = ?")
+        let n = sqlx::query(&self.q_sql("DELETE FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
             .bind(name)
             .bind(channel)
             .execute(&self.pool)
@@ -684,22 +683,18 @@ impl Db {
     ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
         let pattern = format!("%{query}%");
 
-        let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM packages
+        let total: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM packages
              WHERE lower(name) LIKE lower(?) AND channel = ?
-               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)",
-        )
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"))
         .bind(&pattern)
         .bind(channel)
         .fetch_one(&self.pool)
         .await?;
 
-        let pkgs: Vec<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description, license, keywords FROM packages
+        let pkgs: Vec<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages
              WHERE lower(name) LIKE lower(?) AND channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)
-             ORDER BY name LIMIT ? OFFSET ?",
-        )
+             ORDER BY name LIMIT ? OFFSET ?"))
         .bind(&pattern)
         .bind(channel)
         .bind(limit)
@@ -709,11 +704,9 @@ impl Db {
 
         let mut results = Vec::with_capacity(pkgs.len());
         for pkg in pkgs {
-            let latest: Option<VersionRow> = sqlx::query_as(
-                "SELECT version, checksum, yanked, downloads, dependencies,
+            let latest: Option<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
                         upstream_url, build_system FROM versions
-                 WHERE package_id = ? AND yanked = 0 ORDER BY version DESC LIMIT 1",
-            )
+                 WHERE package_id = ? AND yanked = 0 ORDER BY version DESC LIMIT 1"))
             .bind(pkg.id)
             .fetch_optional(&self.pool)
             .await?;
@@ -741,13 +734,11 @@ impl Db {
         upstream_url: Option<&str>,
         build_system: Option<&str>,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO packages (name, channel, description, license, keywords) VALUES (?, ?, ?, ?, ?)
+        sqlx::query(&self.q_sql("INSERT INTO packages (name, channel, description, license, keywords) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(name, channel) DO UPDATE SET
                description = COALESCE(excluded.description, description),
                license     = COALESCE(excluded.license, license),
-               keywords    = COALESCE(excluded.keywords, keywords)",
-        )
+               keywords    = COALESCE(excluded.keywords, keywords)"))
         .bind(name)
         .bind(channel)
         .bind(description)
@@ -756,18 +747,14 @@ impl Db {
         .execute(&self.pool)
         .await?;
 
-        let pkg: PackageRow = sqlx::query_as(
-            "SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?",
-        )
+        let pkg: PackageRow = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(name)
         .bind(channel)
         .fetch_one(&self.pool)
         .await?;
 
-        sqlx::query(
-            "INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
+        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system)
+             VALUES (?, ?, ?, ?, ?, ?)"))
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
@@ -779,14 +766,12 @@ impl Db {
 
         // Auto-grant ownership if the package has no owners yet.
         let owner_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM package_owners WHERE package_id = ?")
+            sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM package_owners WHERE package_id = ?"))
                 .bind(pkg.id)
                 .fetch_one(&self.pool)
                 .await?;
         if owner_count == 0 {
-            sqlx::query(
-                "INSERT OR IGNORE INTO package_owners (package_id, user_id) VALUES (?, ?)",
-            )
+            sqlx::query(&self.q_sql("INSERT OR IGNORE INTO package_owners (package_id, user_id) VALUES (?, ?)"))
             .bind(pkg.id)
             .bind(user_id)
             .execute(&self.pool)
@@ -797,11 +782,9 @@ impl Db {
     }
 
     pub async fn set_yanked(&self, name: &str, version: &str, channel: &str, yanked: bool) -> Result<bool> {
-        let n = sqlx::query(
-            "UPDATE versions SET yanked = ?
+        let n = sqlx::query(&self.q_sql("UPDATE versions SET yanked = ?
              WHERE version = ?
-               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)",
-        )
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"))
         .bind(yanked as i64)
         .bind(version)
         .bind(name)
@@ -816,9 +799,7 @@ impl Db {
 
     /// Count the number of distinct packages owned by `user_id` across all channels.
     pub async fn count_owned_packages(&self, user_id: i64) -> Result<i64> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM package_owners WHERE user_id = ?",
-        )
+        let count: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM package_owners WHERE user_id = ?"))
         .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
@@ -832,9 +813,7 @@ impl Db {
         package_name: &str,
         channel: &str,
     ) -> Result<Option<bool>> {
-        let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?",
-        )
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(package_name)
         .bind(channel)
         .fetch_optional(&self.pool)
@@ -842,9 +821,7 @@ impl Db {
 
         let Some(pkg) = pkg else { return Ok(None) };
 
-        let owns: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM package_owners WHERE package_id = ? AND user_id = ?",
-        )
+        let owns: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM package_owners WHERE package_id = ? AND user_id = ?"))
         .bind(pkg.id)
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -854,15 +831,13 @@ impl Db {
     }
 
     pub async fn get_package_owners(&self, package_name: &str, channel: &str) -> Result<Vec<UserRow>> {
-        let rows = sqlx::query_as(
-            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
+        let rows = sqlx::query_as(&self.q_sql("SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
                     u.email_verified, u.totp_secret, u.totp_enabled
              FROM users u
              JOIN package_owners po ON po.user_id = u.id
              JOIN packages p        ON p.id = po.package_id
              WHERE lower(p.name) = lower(?) AND p.channel = ?
-             ORDER BY u.username",
-        )
+             ORDER BY u.username"))
         .bind(package_name)
         .bind(channel)
         .fetch_all(&self.pool)
@@ -871,28 +846,22 @@ impl Db {
     }
 
     pub async fn add_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
-        let pkg: Option<PackageRow> = sqlx::query_as(
-            "SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?",
-        )
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(package_name)
         .bind(channel)
         .fetch_optional(&self.pool)
         .await?;
         let Some(pkg) = pkg else { return Ok(false) };
 
-        let user: Option<UserRow> = sqlx::query_as(
-            "SELECT id, username, email, password_hash, is_admin,
+        let user: Option<UserRow> = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
                     email_verified, totp_secret, totp_enabled
-             FROM users WHERE lower(username) = lower(?)",
-        )
+             FROM users WHERE lower(username) = lower(?)"))
         .bind(username)
         .fetch_optional(&self.pool)
         .await?;
         let Some(user) = user else { return Ok(false) };
 
-        sqlx::query(
-            "INSERT OR IGNORE INTO package_owners (package_id, user_id) VALUES (?, ?)",
-        )
+        sqlx::query(&self.q_sql("INSERT OR IGNORE INTO package_owners (package_id, user_id) VALUES (?, ?)"))
         .bind(pkg.id)
         .bind(user.id)
         .execute(&self.pool)
@@ -901,11 +870,9 @@ impl Db {
     }
 
     pub async fn remove_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
-        let n = sqlx::query(
-            "DELETE FROM package_owners
+        let n = sqlx::query(&self.q_sql("DELETE FROM package_owners
              WHERE package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)
-               AND user_id    = (SELECT id FROM users    WHERE lower(username) = lower(?))",
-        )
+               AND user_id    = (SELECT id FROM users    WHERE lower(username) = lower(?))"))
         .bind(package_name)
         .bind(channel)
         .bind(username)
@@ -926,8 +893,7 @@ impl Db {
         until:    Option<i64>,
         limit:    i64,
     ) -> Result<Vec<AuditRow>> {
-        let rows = sqlx::query_as(
-            "SELECT a.id, a.user_id, a.action, a.package, a.version,
+        let rows = sqlx::query_as(&self.q_sql("SELECT a.id, a.user_id, a.action, a.package, a.version,
                     a.ip_addr, a.created_at, u.username
              FROM audit_log a
              LEFT JOIN users u ON u.id = a.user_id
@@ -936,8 +902,7 @@ impl Db {
                AND a.created_at >= COALESCE(?, -9223372036854775808)
                AND a.created_at <= COALESCE(?,  9223372036854775807)
              ORDER BY a.created_at DESC
-             LIMIT ?",
-        )
+             LIMIT ?"))
         .bind(username).bind(username)
         .bind(action).bind(action)
         .bind(since)
@@ -962,11 +927,12 @@ impl Db {
         let package = package.map(str::to_string);
         let version = version.map(str::to_string);
         let ip = ip.map(str::to_string);
+        let sql_audit = pg_sql(
+            "INSERT INTO audit_log (user_id, action, package, version, ip_addr)
+             VALUES (?, ?, ?, ?, ?)",
+        );
         tokio::spawn(async move {
-            let _ = sqlx::query(
-                "INSERT INTO audit_log (user_id, action, package, version, ip_addr)
-                 VALUES (?, ?, ?, ?, ?)",
-            )
+            let _ = sqlx::query(&sql_audit)
             .bind(user_id)
             .bind(&action)
             .bind(package.as_deref())
@@ -980,7 +946,7 @@ impl Db {
     /// Delete audit log entries older than `ttl_days`. Returns the number of rows deleted.
     pub async fn prune_audit_log(&self, ttl_days: i64) -> Result<u64> {
         let cutoff = unix_now() - ttl_days * 86_400;
-        let n = sqlx::query("DELETE FROM audit_log WHERE created_at < ?")
+        let n = sqlx::query(&self.q_sql("DELETE FROM audit_log WHERE created_at < ?"))
             .bind(cutoff)
             .execute(&self.pool)
             .await?
@@ -999,11 +965,9 @@ impl Db {
         triple:   &str,
         checksum: &str,
     ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO prebuilts (name, channel, version, triple, checksum)
+        sqlx::query(&self.q_sql("INSERT INTO prebuilts (name, channel, version, triple, checksum)
              VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(name, channel, version, triple) DO UPDATE SET checksum = excluded.checksum",
-        )
+             ON CONFLICT(name, channel, version, triple) DO UPDATE SET checksum = excluded.checksum"))
         .bind(name).bind(channel).bind(version).bind(triple).bind(checksum)
         .execute(&self.pool).await?;
         Ok(())
@@ -1017,10 +981,8 @@ impl Db {
         version: &str,
         triple:  &str,
     ) -> Result<Option<PrebuiltRow>> {
-        Ok(sqlx::query_as::<_, PrebuiltRow>(
-            "SELECT triple, checksum FROM prebuilts
-             WHERE name = ? AND channel = ? AND version = ? AND triple = ?",
-        )
+        Ok(sqlx::query_as::<_, PrebuiltRow>(&self.q_sql("SELECT triple, checksum FROM prebuilts
+             WHERE name = ? AND channel = ? AND version = ? AND triple = ?"))
         .bind(name).bind(channel).bind(version).bind(triple)
         .fetch_optional(&self.pool).await?)
     }
@@ -1032,18 +994,16 @@ impl Db {
         channel: &str,
         version: &str,
     ) -> Result<Vec<PrebuiltRow>> {
-        Ok(sqlx::query_as::<_, PrebuiltRow>(
-            "SELECT triple, checksum FROM prebuilts
+        Ok(sqlx::query_as::<_, PrebuiltRow>(&self.q_sql("SELECT triple, checksum FROM prebuilts
              WHERE name = ? AND channel = ? AND version = ?
-             ORDER BY triple",
-        )
+             ORDER BY triple"))
         .bind(name).bind(channel).bind(version)
         .fetch_all(&self.pool).await?)
     }
 
     /// Delete all prebuilts for a package (used when the package itself is deleted).
     pub async fn delete_package_prebuilts(&self, name: &str, channel: &str) -> Result<()> {
-        sqlx::query("DELETE FROM prebuilts WHERE name = ? AND channel = ?")
+        sqlx::query(&self.q_sql("DELETE FROM prebuilts WHERE name = ? AND channel = ?"))
             .bind(name).bind(channel)
             .execute(&self.pool).await?;
         Ok(())
@@ -1052,21 +1012,17 @@ impl Db {
     // ── Metrics ────────────────────────────────────────────────────────────────
 
     pub async fn stats(&self) -> Result<DbStats> {
-        let packages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM packages")
+        let packages: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM packages"))
             .fetch_one(&self.pool).await?;
-        let versions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM versions")
+        let versions: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM versions"))
             .fetch_one(&self.pool).await?;
-        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        let users: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM users"))
             .fetch_one(&self.pool).await?;
         let now = unix_now();
-        let tokens_active: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM tokens WHERE expires_at IS NULL OR expires_at > ?",
-        )
+        let tokens_active: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM tokens WHERE expires_at IS NULL OR expires_at > ?"))
         .bind(now)
         .fetch_one(&self.pool).await?;
-        let downloads_total: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(downloads), 0) FROM versions",
-        )
+        let downloads_total: i64 = sqlx::query_scalar(&self.q_sql("SELECT COALESCE(SUM(downloads), 0) FROM versions"))
         .fetch_one(&self.pool).await?;
         Ok(DbStats { packages, versions, users, tokens_active, downloads_total })
     }
@@ -1074,15 +1030,13 @@ impl Db {
     // ── Organizations ──────────────────────────────────────────────────────────
 
     pub async fn create_org(&self, name: &str, description: Option<&str>, owner_id: i64) -> Result<i64> {
-        let org_id: i64 = sqlx::query_scalar(
-            "INSERT INTO organizations (name, description) VALUES (?, ?) RETURNING id",
-        )
+        let org_id: i64 = sqlx::query_scalar(&self.q_sql("INSERT INTO organizations (name, description) VALUES (?, ?) RETURNING id"))
         .bind(name)
         .bind(description)
         .fetch_one(&self.pool)
         .await?;
 
-        sqlx::query("INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'owner')")
+        sqlx::query(&self.q_sql("INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, 'owner')"))
             .bind(org_id)
             .bind(owner_id)
             .execute(&self.pool)
@@ -1092,9 +1046,7 @@ impl Db {
     }
 
     pub async fn get_org(&self, name: &str) -> Result<Option<OrgRow>> {
-        let row = sqlx::query_as(
-            "SELECT id, name, description, created_at FROM organizations WHERE lower(name) = lower(?)",
-        )
+        let row = sqlx::query_as(&self.q_sql("SELECT id, name, description, created_at FROM organizations WHERE lower(name) = lower(?)"))
         .bind(name)
         .fetch_optional(&self.pool)
         .await?;
@@ -1102,16 +1054,14 @@ impl Db {
     }
 
     pub async fn list_orgs(&self) -> Result<Vec<OrgRow>> {
-        let rows = sqlx::query_as(
-            "SELECT id, name, description, created_at FROM organizations ORDER BY name",
-        )
+        let rows = sqlx::query_as(&self.q_sql("SELECT id, name, description, created_at FROM organizations ORDER BY name"))
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
     }
 
     pub async fn delete_org(&self, name: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM organizations WHERE lower(name) = lower(?)")
+        let result = sqlx::query(&self.q_sql("DELETE FROM organizations WHERE lower(name) = lower(?)"))
             .bind(name)
             .execute(&self.pool)
             .await?;
@@ -1119,14 +1069,12 @@ impl Db {
     }
 
     pub async fn list_org_members(&self, org_name: &str) -> Result<Vec<OrgMemberRow>> {
-        let rows = sqlx::query_as(
-            "SELECT m.user_id, u.username, m.role
+        let rows = sqlx::query_as(&self.q_sql("SELECT m.user_id, u.username, m.role
              FROM org_members m
              JOIN organizations o ON o.id = m.org_id
              JOIN users u ON u.id = m.user_id
              WHERE lower(o.name) = lower(?)
-             ORDER BY m.role DESC, u.username",
-        )
+             ORDER BY m.role DESC, u.username"))
         .bind(org_name)
         .fetch_all(&self.pool)
         .await?;
@@ -1142,10 +1090,8 @@ impl Db {
             Some(u) => u,
             None => return Ok(false),
         };
-        sqlx::query(
-            "INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
-             ON CONFLICT(org_id, user_id) DO UPDATE SET role = excluded.role",
-        )
+        sqlx::query(&self.q_sql("INSERT INTO org_members (org_id, user_id, role) VALUES (?, ?, ?)
+             ON CONFLICT(org_id, user_id) DO UPDATE SET role = excluded.role"))
         .bind(org.id)
         .bind(user.id)
         .bind(role)
@@ -1155,11 +1101,9 @@ impl Db {
     }
 
     pub async fn remove_org_member(&self, org_name: &str, username: &str) -> Result<bool> {
-        let result = sqlx::query(
-            "DELETE FROM org_members
+        let result = sqlx::query(&self.q_sql("DELETE FROM org_members
              WHERE org_id = (SELECT id FROM organizations WHERE lower(name) = lower(?))
-               AND user_id = (SELECT id FROM users WHERE lower(username) = lower(?))",
-        )
+               AND user_id = (SELECT id FROM users WHERE lower(username) = lower(?))"))
         .bind(org_name)
         .bind(username)
         .execute(&self.pool)
@@ -1168,11 +1112,9 @@ impl Db {
     }
 
     pub async fn is_org_owner(&self, org_name: &str, user_id: i64) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM org_members m
+        let count: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM org_members m
              JOIN organizations o ON o.id = m.org_id
-             WHERE lower(o.name) = lower(?) AND m.user_id = ? AND m.role = 'owner'",
-        )
+             WHERE lower(o.name) = lower(?) AND m.user_id = ? AND m.role = 'owner'"))
         .bind(org_name)
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -1181,11 +1123,9 @@ impl Db {
     }
 
     pub async fn is_org_member(&self, org_name: &str, user_id: i64) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM org_members m
+        let count: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM org_members m
              JOIN organizations o ON o.id = m.org_id
-             WHERE lower(o.name) = lower(?) AND m.user_id = ?",
-        )
+             WHERE lower(o.name) = lower(?) AND m.user_id = ?"))
         .bind(org_name)
         .bind(user_id)
         .fetch_one(&self.pool)
@@ -1202,9 +1142,7 @@ impl Db {
         } else {
             None
         };
-        let result = sqlx::query(
-            "UPDATE packages SET org_id = ? WHERE lower(name) = lower(?) AND lower(channel) = lower(?)",
-        )
+        let result = sqlx::query(&self.q_sql("UPDATE packages SET org_id = ? WHERE lower(name) = lower(?) AND lower(channel) = lower(?)"))
         .bind(org_id)
         .bind(package_name)
         .bind(channel)
@@ -1220,11 +1158,9 @@ impl Db {
             return Ok(true);
         }
         // Org membership check.
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM packages p
+        let count: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM packages p
              JOIN org_members m ON m.org_id = p.org_id
-             WHERE lower(p.name) = lower(?) AND lower(p.channel) = lower(?) AND m.user_id = ?",
-        )
+             WHERE lower(p.name) = lower(?) AND lower(p.channel) = lower(?) AND m.user_id = ?"))
         .bind(package_name)
         .bind(channel)
         .bind(user_id)

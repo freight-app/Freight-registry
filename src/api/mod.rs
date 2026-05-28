@@ -22,6 +22,7 @@ pub mod health;
 pub mod login;
 pub mod metrics_handler;
 pub mod my_tokens;
+pub mod oauth;
 pub mod orgs;
 pub mod owners;
 pub mod packages;
@@ -116,6 +117,9 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/users/login",                      post(login::login))
         .route("/api/v1/users/register",                   post(register::register))
         .route("/api/v1/auth/refresh",                     post(refresh::refresh))
+        // GitHub OAuth
+        .route("/auth/github",                             get(oauth::github_start))
+        .route("/auth/github/callback",                    get(oauth::github_callback))
         // Email / password reset (no auth)
         .route("/api/v1/users/verify-email",               get(email::verify_email))
         .route("/api/v1/users/reset-password/request",     post(reset::request_reset))

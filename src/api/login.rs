@@ -54,6 +54,14 @@ pub async fn login(
         .await?
         .ok_or_else(|| ApiError::not_found("unknown username or wrong password"))?;
 
+    // OAuth-only accounts have a sentinel instead of a real password hash.
+    if user.password_hash.starts_with("!oauth:") {
+        let provider = user.password_hash.trim_start_matches("!oauth:");
+        return Err(ApiError::bad_request(format!(
+            "this account uses {provider} login — visit /auth/{provider} to sign in"
+        )));
+    }
+
     let parsed = PasswordHash::new(&user.password_hash)
         .map_err(|_| ApiError::internal("password hash corrupt"))?;
 

@@ -28,7 +28,7 @@ use freight_registry::{
     rate_limit::Limiters,
     storage::Storage,
     validate,
-    AppState,
+    AppState, GitHubOAuthConfig,
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
@@ -93,6 +93,13 @@ enum Command {
         /// Maximum number of packages a non-admin user may own (omit for no limit)
         #[arg(long, env = "FREIGHT_MAX_PACKAGES_PER_USER")]
         max_packages_per_user: Option<u32>,
+        // ── GitHub OAuth (both must be set together to enable the flow) ──────
+        /// GitHub OAuth app client ID (enables GET /auth/github login)
+        #[arg(long, env = "GITHUB_CLIENT_ID")]
+        github_client_id: Option<String>,
+        /// GitHub OAuth app client secret
+        #[arg(long, env = "GITHUB_CLIENT_SECRET")]
+        github_client_secret: Option<String>,
         // ── SMTP email delivery (all optional; omit to log links to stdout) ──
         /// SMTP server hostname — enables real email delivery when set
         #[arg(long, env = "FREIGHT_SMTP_HOST")]
@@ -204,6 +211,7 @@ async fn main() -> Result<()> {
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
             mirror_upstream, max_packages_per_user,
+            github_client_id, github_client_secret,
             smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
@@ -254,6 +262,21 @@ async fn main() -> Result<()> {
                 Arc::new(StdoutMailer)
             };
 
+            let github_oauth = match (github_client_id, github_client_secret) {
+                (Some(id), Some(secret)) => {
+                    tracing::info!("GitHub OAuth enabled (client_id: {id})");
+                    Some(GitHubOAuthConfig { client_id: id, client_secret: secret })
+                }
+                (Some(_), None) | (None, Some(_)) => {
+                    tracing::warn!(
+                        "GitHub OAuth: both --github-client-id and --github-client-secret \
+                         must be set — OAuth disabled"
+                    );
+                    None
+                }
+                (None, None) => None,
+            };
+
             let state = Arc::new(AppState {
                 db,
                 storage,
@@ -263,6 +286,8 @@ async fn main() -> Result<()> {
                 mailer,
                 mirror_upstream:      mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
                 max_packages_per_user,
+                github_oauth,
+                oauth_states:         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             });
 
             // Spawn audit log pruning task if a TTL was configured.

@@ -191,6 +191,18 @@ impl Db {
 
     // ── Users ──────────────────────────────────────────────────────────────────
 
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<UserRow>> {
+        let row = sqlx::query_as(
+            "SELECT id, username, email, password_hash, is_admin,
+                    email_verified, totp_secret, totp_enabled
+             FROM users WHERE lower(email) = lower(?)",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     pub async fn create_user(
         &self,
         username: &str,
@@ -241,6 +253,116 @@ impl Db {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    // ── OAuth ──────────────────────────────────────────────────────────────────
+
+    /// Sentinel stored as `password_hash` for OAuth-only accounts.
+    /// This is deliberately not a valid Argon2 PHC string so that password
+    /// login returns a useful error rather than a 500.
+    pub const OAUTH_SENTINEL: &'static str = "!oauth:github";
+
+    /// Look up the freight user linked to a given OAuth identity.
+    pub async fn find_oauth_user(
+        &self,
+        provider: &str,
+        provider_id: &str,
+    ) -> Result<Option<UserRow>> {
+        let row = sqlx::query_as(
+            "SELECT u.id, u.username, u.email, u.password_hash, u.is_admin,
+                    u.email_verified, u.totp_secret, u.totp_enabled
+             FROM users u
+             JOIN oauth_accounts o ON o.user_id = u.id
+             WHERE o.provider = ? AND o.provider_id = ?",
+        )
+        .bind(provider)
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Record an OAuth identity against an existing user.
+    pub async fn link_oauth_account(
+        &self,
+        user_id:     i64,
+        provider:    &str,
+        provider_id: &str,
+        login:       &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_id, login)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(provider)
+        .bind(provider_id)
+        .bind(login)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Find the freight user for a given OAuth identity, creating one if needed.
+    ///
+    /// Priority:
+    /// 1. Existing `oauth_accounts` row → return that user.
+    /// 2. Matching email in `users` → link the OAuth account to that user.
+    /// 3. Create a new user with `password_hash = OAUTH_SENTINEL`.
+    ///    If `provider_login` is already taken, `_{id}` is appended until a free
+    ///    name is found.
+    pub async fn find_or_create_oauth_user(
+        &self,
+        provider:       &str,
+        provider_id:    &str,
+        provider_login: &str,
+        email:          Option<&str>,
+    ) -> Result<UserRow> {
+        // 1. Already linked?
+        if let Some(user) = self.find_oauth_user(provider, provider_id).await? {
+            return Ok(user);
+        }
+
+        // 2. Match by email if available.
+        if let Some(email) = email {
+            if let Some(user) = self.get_user_by_email(email).await? {
+                self.link_oauth_account(user.id, provider, provider_id, provider_login).await?;
+                return Ok(user);
+            }
+        }
+
+        // 3. Create a new user.
+        let mut username = provider_login.to_string();
+        // Sanitize: replace characters invalid in freight usernames with '_'.
+        username = username
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .collect();
+        // Ensure uniqueness.
+        let base = username.clone();
+        let mut suffix = 1u32;
+        loop {
+            if self.get_user_by_username(&username).await?.is_none() {
+                break;
+            }
+            username = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+
+        let user_id = self
+            .create_user(&username, email, Self::OAUTH_SENTINEL)
+            .await?;
+
+        // Mark email as verified since GitHub already verified it.
+        if email.is_some() {
+            self.set_email_verified(user_id).await?;
+        }
+
+        self.link_oauth_account(user_id, provider, provider_id, provider_login).await?;
+
+        self.get_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("user {user_id} disappeared after insert"))
     }
 
     pub async fn delete_user(&self, username: &str) -> Result<bool> {

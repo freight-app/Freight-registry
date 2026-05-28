@@ -390,6 +390,37 @@ footer {
 footer a { color: var(--muted); }
 footer a:hover { color: var(--text); }
 
+/* ── Prebuilts ────────────────────────────────────────────────────────────── */
+
+.prebuilt-list { display: flex; flex-direction: column; gap: 8px; }
+.prebuilt-row  { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.badge.prebuilt { font-family: var(--font-mono); font-size: 12px; border-color: #1b3a5c; color: #58a6ff; }
+
+/* ── Version highlight ────────────────────────────────────────────────────── */
+
+tr.version-active td { background: var(--accent-dim); }
+
+/* ── README — GFM table ───────────────────────────────────────────────────── */
+
+.readme .md-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.readme .md-table th, .readme .md-table td {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+.readme .md-table th { background: var(--code-bg); font-weight: 600; }
+
+/* ── README — blockquote ──────────────────────────────────────────────────── */
+
+.readme blockquote {
+  margin: 0 0 12px;
+  padding: 8px 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--muted);
+  background: var(--code-bg);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
 /* ── Pagination ───────────────────────────────────────────────────────────── */
 
 .pagination {

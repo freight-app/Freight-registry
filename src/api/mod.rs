@@ -34,6 +34,7 @@ pub mod refresh;
 pub mod register;
 pub mod reset;
 pub mod search;
+pub mod stats;
 pub mod totp;
 pub mod yank;
 
@@ -98,9 +99,10 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     Router::new()
-        // Health + metrics (no auth, no rate limit)
+        // Health + metrics + stats (no auth, no rate limit)
         .route("/health",                                   get(health::health))
         .route("/metrics",                                  get(metrics_handler::metrics))
+        .route("/api/v1/stats",                             get(stats::stats))
         // Public read
         .route("/api/v1/packages/:name",                             get(packages::get_package))
         .route("/api/v1/packages/:name/readme",                      get(readme::get_readme).put(readme::put_readme))
@@ -205,5 +207,17 @@ async fn security_headers(request: Request, next: Next) -> Response {
     h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     h.insert("x-frame-options",        HeaderValue::from_static("DENY"));
     h.insert("referrer-policy",        HeaderValue::from_static("strict-origin-when-cross-origin"));
+    // CSP: allow same-origin resources; allow inline styles/scripts (needed for page-inline JS)
+    h.insert(
+        "content-security-policy",
+        HeaderValue::from_static(
+            "default-src 'self'; \
+             script-src 'self' 'unsafe-inline'; \
+             style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; \
+             connect-src 'self'; \
+             frame-ancestors 'none'",
+        ),
+    );
     resp
 }

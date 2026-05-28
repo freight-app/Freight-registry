@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
 <body>
 
@@ -152,15 +153,17 @@ async function loadFeatured() {
 
 async function loadStats() {
   try {
-    const h = await API.health();
-    if (!h) return;
-    const bar = document.getElementById('stats-bar');
-    // health endpoint returns db/status/time; stats are in /api/v1/admin if admin
-    // For anonymous users, just show uptime badge
+    const [h, s] = await Promise.all([API.health(), API.stats()]);
+    const bar  = document.getElementById('stats-bar');
+    const pkgs = s?.packages ?? null;
+    const dls  = s?.downloads ?? null;
+    const ok   = h?.status === 'ok';
     bar.innerHTML = `
+      ${pkgs != null ? `<div class="stat"><span class="stat-val">${fmtNum(pkgs)}</span><span class="stat-lbl">Packages</span></div>` : ''}
+      ${dls  != null ? `<div class="stat"><span class="stat-val">${fmtNum(dls)}</span><span class="stat-lbl">Downloads</span></div>` : ''}
       <div class="stat">
-        <span class="stat-val">${h.status === 'ok' ? '✓' : '!'}</span>
-        <span class="stat-lbl">Status</span>
+        <span class="stat-val" style="font-size:1.4rem">${ok ? '✓' : '⚠'}</span>
+        <span class="stat-lbl">Registry ${ok ? 'Online' : 'Degraded'}</span>
       </div>`;
   } catch {}
 }

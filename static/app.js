@@ -45,6 +45,13 @@ const API = {
     if (!r.ok) return null;
     return r.json();
   },
+
+  /** GET /api/v1/stats */
+  async stats() {
+    const r = await fetch('/api/v1/stats');
+    if (!r.ok) return null;
+    return r.json();
+  },
 };
 
 // ── Render helpers ─────────────────────────────────────────────────────────
@@ -80,7 +87,7 @@ function renderPackageCards(packages, el) {
   }
   el.innerHTML = packages.map(pkg => {
     const kws = (pkg.keywords || []).slice(0, 4)
-      .map(k => `<span class="badge keyword">${esc(k)}</span>`).join('');
+      .map(k => `<a href="/?q=${encodeURIComponent(k)}" class="badge keyword" onclick="event.stopPropagation()">${esc(k)}</a>`).join('');
     const dl = pkg.versions?.[0]?.downloads || pkg.downloads || 0;
     return `
       <div class="pkg-card" onclick="location.href='/packages/${esc(pkg.name)}'">

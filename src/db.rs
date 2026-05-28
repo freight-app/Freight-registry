@@ -622,6 +622,7 @@ impl Db {
             .is_ok()
     }
 
+
     pub async fn get_package(&self, name: &str, channel: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
         let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages \
              WHERE lower(name) = lower(?) AND channel = ?"))

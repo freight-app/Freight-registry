@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
 <body>
 
@@ -54,15 +55,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  const channel = new URLSearchParams(location.search).get('channel') ?? undefined;
+  const params  = new URLSearchParams(location.search);
+  const channel = params.get('channel') ?? undefined;
+  const version = params.get('version') ?? undefined;
   document.title = `${name} — Freight Registry`;
 
-  await loadPackage(name, channel);
+  await loadPackage(name, channel, version);
 });
 
 // ── Load & render ───────────────────────────────────────────────────────────
 
-async function loadPackage(name, channel) {
+async function loadPackage(name, channel, selectedVersion) {
   const main = document.getElementById('main');
   try {
     const [pkg, owners, readme] = await Promise.all([
@@ -81,9 +84,16 @@ async function loadPackage(name, channel) {
       return;
     }
 
-    const latest = pkg.versions?.[0] ?? {};
-    const deps   = latest.dependencies ?? {};
+    // Pick displayed version: URL ?version= param → latest
+    const activeVer = selectedVersion
+      ? (pkg.versions ?? []).find(v => v.version === selectedVersion) ?? pkg.versions?.[0] ?? {}
+      : pkg.versions?.[0] ?? {};
+    const latest    = activeVer;   // "latest" alias kept for template compat
+    const deps      = latest.dependencies ?? {};
     const ownerList = (owners.users ?? []).map(u => u.login ?? u);
+
+    // Total downloads across all versions
+    const totalDownloads = (pkg.versions ?? []).reduce((s, v) => s + (v.downloads ?? 0), 0);
 
     // ── Build header ───────────────────────────────────────────────────────
     const installLine = channel && channel !== 'stable'
@@ -96,30 +106,50 @@ async function loadPackage(name, channel) {
     ).join(' ');
 
     // ── Build versions table ───────────────────────────────────────────────
-    const versionsHtml = (pkg.versions ?? []).map(v => `
-      <tr class="${v.yanked ? 'yanked' : ''}">
-        <td><a href="/packages/${esc(name)}?version=${esc(v.version)}">${esc(v.version)}</a>
-            ${v.yanked ? ' <span style="color:#f85149;font-size:11px">[yanked]</span>' : ''}</td>
+    const versionsHtml = (pkg.versions ?? []).map(v => {
+      const isActive = v.version === latest.version;
+      const vUrl = `/packages/${esc(name)}?version=${esc(v.version)}${channel && channel !== 'stable' ? `&channel=${esc(channel)}` : ''}`;
+      return `
+      <tr class="${v.yanked ? 'yanked' : ''}${isActive ? ' version-active' : ''}">
+        <td><a href="${vUrl}">${esc(v.version)}</a>
+            ${v.yanked ? ' <span style="color:#f85149;font-size:11px">[yanked]</span>' : ''}
+            ${isActive ? ' <span style="font-size:11px;color:var(--muted)">(viewing)</span>' : ''}</td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${esc((v.checksum ?? '').slice(0,12))}…</td>
         <td>${v.build_system ? `<span class="badge">${esc(v.build_system)}</span>` : '—'}</td>
-        <td class="badge dl" style="border:none">${fmtNum(v.downloads)}</td>
+        <td style="color:var(--green)">${fmtNum(v.downloads)}</td>
         <td>
           <a href="/api/v1/packages/${esc(name)}/${esc(v.version)}/download"
              style="font-size:12px;color:var(--muted)">↓ tar.gz</a>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     // ── Build dependencies ─────────────────────────────────────────────────
     const depEntries = Object.entries(deps);
     const depsHtml = depEntries.length === 0
       ? '<p style="color:var(--muted);font-size:13px">No dependencies.</p>'
       : `<table class="dep-table">${depEntries.map(([k, v]) =>
-           `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`;
+           `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</table>`;
+
+    // ── Build prebuilts panel ──────────────────────────────────────────────
+    const triples = latest.prebuilt_triples ?? [];
+    const prebuiltsHtml = triples.length === 0
+      ? ''
+      : `<div style="margin-top:24px">
+           <h2 style="font-size:16px;margin-bottom:12px">Prebuilt binaries</h2>
+           <div class="prebuilt-list">
+             ${triples.map(t => `
+               <div class="prebuilt-row">
+                 <span class="badge prebuilt">${esc(t)}</span>
+                 <a href="/api/v1/packages/${esc(name)}/${esc(latest.version)}/prebuilt/${esc(t)}/download"
+                    style="font-size:12px;color:var(--muted)">↓ download</a>
+               </div>`).join('')}
+           </div>
+         </div>`;
 
     // ── Render README ──────────────────────────────────────────────────────
     let readmeHtml = '';
     if (readme) {
-      // Very minimal markdown: code fences, headers, paragraphs
       readmeHtml = `<div class="readme">${renderMarkdown(readme)}</div>`;
     }
 
@@ -140,6 +170,7 @@ async function loadPackage(name, channel) {
         <div class="pkg-meta" style="margin-bottom:8px">
           <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
           ${latest.build_system ? `<span class="badge">${esc(latest.build_system)}</span>` : ''}
+          ${totalDownloads ? `<span class="badge dl">↓ ${fmtNum(totalDownloads)} total</span>` : ''}
           ${kwHtml}
         </div>
       </div>
@@ -170,9 +201,13 @@ async function loadPackage(name, channel) {
           </div>
 
           <div style="margin-top:24px">
-            <h2 style="font-size:16px;margin-bottom:12px">Dependencies</h2>
+            <h2 style="font-size:16px;margin-bottom:12px">Dependencies
+              <span style="font-size:13px;font-weight:400;color:var(--muted)"> — v${esc(latest.version ?? pkg.latest)}</span>
+            </h2>
             ${depsHtml}
           </div>
+
+          ${prebuiltsHtml}
         </div>
 
         <div>
@@ -181,9 +216,10 @@ async function loadPackage(name, channel) {
             <ul>
               <li>
                 <span class="label">Latest</span>
-                <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
+                <span class="badge version">v${esc(pkg.versions?.[0]?.version ?? pkg.latest)}</span>
               </li>
               ${pkg.license ? `<li><span class="label">License</span><span>${esc(pkg.license)}</span></li>` : ''}
+              ${totalDownloads ? `<li><span class="label">Downloads</span><span style="color:var(--green)">${fmtNum(totalDownloads)}</span></li>` : ''}
               ${(() => {
                 const repo = repoUrl(latest.upstream_url);
                 return repo
@@ -220,7 +256,7 @@ async function loadPackage(name, channel) {
             <h3>Quick links</h3>
             <ul>
               <li><a href="/api/v1/packages/${esc(name)}" style="font-size:13px">JSON metadata ↗</a></li>
-              <li><a href="/api/v1/packages/${esc(name)}/${esc(latest.version ?? pkg.latest)}/download"
+              <li><a href="/api/v1/packages/${esc(name)}/${esc(pkg.versions?.[0]?.version ?? pkg.latest)}/download"
                      style="font-size:13px">Download latest ↗</a></li>
             </ul>
           </div>
@@ -231,49 +267,103 @@ async function loadPackage(name, channel) {
   }
 }
 
-// ── Minimal markdown renderer (no external deps) ────────────────────────────
+// ── Markdown renderer (no external deps) ─────────────────────────────────────
+// Supports: fenced code, inline code, headers (h1–h3), bold, italic, links,
+// images, blockquotes, ordered + unordered lists, tables (GFM), horizontal rules.
 
 function renderMarkdown(md) {
-  // Escape HTML first
-  let html = md
+  // 1. Extract fenced code blocks to protect them from further transforms
+  const codeBlocks = [];
+  let html = md.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre><code${lang ? ` class="language-${lang}"` : ''}>${escMd(code.trimEnd())}</code></pre>`);
+    return `\x00CODE${idx}\x00`;
+  });
+
+  // 2. Escape remaining HTML
+  html = html
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // Fenced code blocks
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-    `<pre><code${lang ? ` class="language-${lang}"` : ''}>${code.trimEnd()}</code></pre>`
-  );
+  // 3. Inline code (after HTML escape so < > inside are safe)
+  html = html.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
 
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 4. Headers
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm,  '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm,   '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm,    '<h1>$1</h1>');
 
-  // Headers
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
-  html = html.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
+  // 5. Bold / italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g,     '<strong>$1</strong>');
+  html = html.replace(/\*([^*\n]+?)\*/g,    '<em>$1</em>');
 
-  // Bold / italic
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g,     '<em>$1</em>');
-
-  // Links
+  // 6. Links + images
+  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g,
+    '<img src="$2" alt="$1" style="max-width:100%">');
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
-  // Horizontal rule
-  html = html.replace(/^---+$/gm, '<hr style="border-color:var(--border)">');
+  // 7. Horizontal rule
+  html = html.replace(/^([-*_]){3,}$/gm, '<hr style="border-color:var(--border)">');
 
-  // Paragraphs (double newline → <p>)
+  // 8. GFM tables  (|col|col| lines with a |---|---| separator)
+  html = html.replace(
+    /^(\|.+\|\n)\|[-| :]+\|\n((?:\|.+\|\n)*)/gm,
+    (_, header, body) => {
+      const thCells = header.trim().split('|').filter(Boolean)
+        .map(c => `<th>${c.trim()}</th>`).join('');
+      const tbRows = body.trim().split('\n').map(row => {
+        const cells = row.split('|').filter(Boolean)
+          .map(c => `<td>${c.trim()}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+      }).join('\n');
+      return `<table class="md-table"><thead><tr>${thCells}</tr></thead><tbody>${tbRows}</tbody></table>\n`;
+    }
+  );
+
+  // 9. Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, (_, text) => `<blockquote>${text}</blockquote>`);
+  // Merge consecutive blockquotes
+  html = html.replace(/<\/blockquote>\n<blockquote>/g, '\n');
+
+  // 10. Lists — process blocks of consecutive list lines
+  // Unordered
+  html = html.replace(/((?:^[ \t]*[-*+] .+\n?)+)/gm, block => {
+    const items = block.trim().split('\n')
+      .map(l => `<li>${l.replace(/^[ \t]*[-*+] /, '')}</li>`).join('');
+    return `<ul>${items}</ul>\n`;
+  });
+  // Ordered
+  html = html.replace(/((?:^[ \t]*\d+\. .+\n?)+)/gm, block => {
+    const items = block.trim().split('\n')
+      .map(l => `<li>${l.replace(/^[ \t]*\d+\. /, '')}</li>`).join('');
+    return `<ol>${items}</ol>\n`;
+  });
+
+  // 11. Paragraphs (double newline → <p>)
   html = html
     .split(/\n{2,}/)
     .map(block => {
-      if (/^<(h[1-6]|pre|hr|ul|ol|li)/.test(block.trim())) return block;
-      return `<p>${block.replace(/\n/g, '<br>')}</p>`;
+      const t = block.trim();
+      if (!t) return '';
+      if (/^<(h[1-6]|pre|hr|ul|ol|table|blockquote|\x00CODE)/.test(t)) return t;
+      return `<p>${t.replace(/\n/g, '<br>')}</p>`;
     })
+    .filter(Boolean)
     .join('\n');
 
+  // 12. Restore fenced code blocks
+  html = html.replace(/\x00CODE(\d+)\x00/g, (_, i) => codeBlocks[+i]);
+
   return html;
+}
+
+/** Escape HTML inside code blocks (called before the main escape pass). */
+function escMd(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 </script>
 </body>

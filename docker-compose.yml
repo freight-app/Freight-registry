@@ -1,3 +1,12 @@
+# freight-registry — simple single-container setup (mode 1: stream from local storage)
+#
+# Downloads are served directly by the registry server.
+# Good for: local dev, small teams, private networks.
+#
+# For production with separate download server see:
+#   docker-compose.nginx.yml  (nginx CDN split — recommended for self-hosted)
+#   docker-compose.s3.yml     (MinIO / AWS S3 with presigned URLs)
+
 services:
   registry:
     build: .
@@ -7,12 +16,12 @@ services:
     volumes:
       - data:/data
     environment:
-      FREIGHT_BASE_URL: "http://localhost:7878"
-      # FREIGHT_BIND: "0.0.0.0:7878"
-      # FREIGHT_MAX_UPLOAD_MB: "50"
-      # FREIGHT_AUDIT_LOG_TTL_DAYS: "90"
-      # FREIGHT_RATE_LIMIT_READ: "120"
-      # FREIGHT_RATE_LIMIT_WRITE: "10"
+      FREIGHT_BASE_URL:   "http://localhost:7878"
+      # FREIGHT_BIND:              "0.0.0.0:7878"
+      # FREIGHT_MAX_UPLOAD_MB:     "50"
+      # FREIGHT_AUDIT_LOG_TTL_DAYS:"90"
+      # FREIGHT_RATE_LIMIT_READ:   "120"
+      # FREIGHT_RATE_LIMIT_WRITE:  "10"
       RUST_LOG: "freight_registry=info,tower_http=info"
     restart: unless-stopped
 

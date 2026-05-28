@@ -1,0 +1,74 @@
+# freight-registry example config
+#
+# Copy to one of:
+#   /etc/freight-registry.toml
+#   ~/.config/freight-registry/config.toml
+#   $FREIGHT_CONFIG (custom path)
+#
+# Values here are used only when the corresponding env var / CLI flag is not set.
+# CLI flags > env vars > config file.
+
+# Database URL.  Defaults to {data}/registry.db (SQLite) when omitted.
+# url = "sqlite:///var/lib/freight-registry/registry.db"
+# url = "postgres://freight:secret@db.internal/freight"
+
+[serve]
+url  = "https://freight.example.com"   # public base URL (embedded in download links)
+bind = "0.0.0.0:7878"
+
+max_upload_mb      = 50
+audit_log_ttl_days = 90
+rate_limit_read    = 120               # requests/minute/IP for read endpoints
+rate_limit_write   = 10                # requests/minute/IP for publish/yank
+
+# ── Download server (pick one mode) ───────────────────────────────────────────
+
+# Mode 1 — stream from local storage (default, no extra config)
+# (omit download_url and s3 sections)
+
+# Mode 2 — nginx or CDN in front of the tarballs directory
+# download_url = "https://downloads.freight.example.com"
+
+# Mode 3 — S3 / MinIO with presigned URLs (no download_url needed)
+# [serve.s3]
+# bucket   = "freight-packages"
+# endpoint = "http://minio:9000"       # omit for real AWS
+# key_id   = "AKIAIOSFODNN7EXAMPLE"
+# secret   = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+# region   = "us-east-1"
+
+# ── Email delivery ─────────────────────────────────────────────────────────────
+# Omit this section to log verification / reset links to stdout instead.
+
+# [serve.smtp]
+# host     = "smtp.example.com"
+# port     = 587                       # 587 STARTTLS (default), 465 TLS, 25 plain
+# username = "noreply@example.com"
+# password = "secret"
+# from     = "Freight Registry <noreply@example.com>"
+# tls      = "starttls"                # "starttls" (default), "tls", or "none"
+
+# ── OAuth / OIDC providers ─────────────────────────────────────────────────────
+# Repeat [[serve.oauth]] for each provider.
+# Env-var shortcuts: GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET  → /auth/github
+#                    GITLAB_CLIENT_ID + GITLAB_CLIENT_SECRET  → /auth/gitlab
+#                    GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET  → /auth/google
+
+# Company OIDC (Okta, Azure AD, Keycloak, self-hosted GitLab, …):
+# [[serve.oauth]]
+# name          = "okta"
+# display_name  = "Okta SSO"
+# client_id     = "0oa…"
+# client_secret = "…"
+# issuer        = "https://company.okta.com"    # OIDC auto-discovery
+
+# Non-OIDC (manual endpoints, e.g. Gitea):
+# [[serve.oauth]]
+# name                   = "gitea"
+# client_id              = "abc"
+# client_secret          = "def"
+# authorization_endpoint = "https://git.internal/login/oauth/authorize"
+# token_endpoint         = "https://git.internal/login/oauth/access_token"
+# userinfo_endpoint      = "https://git.internal/api/v1/user"
+# id_field               = "id"
+# username_field         = "login"

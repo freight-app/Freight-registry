@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 axum               = "0.7"
 tokio              = { version = "1", features = ["full"] }
-tower-http         = { version = "0.5", features = ["trace", "cors"] }
+tower-http         = { version = "0.5", features = ["trace", "cors", "fs"] }
 totp-rs            = { version = "5", features = ["gen_secret", "otpauth"] }
 sqlx               = { version = "0.8", features = ["sqlite", "postgres", "any", "runtime-tokio", "macros", "migrate"] }
 reqwest            = { version = "0.12", features = ["json", "stream"] }

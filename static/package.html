@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+  </div>
+</nav>
+
+<main id="main">
+  <div class="loading"><div class="spinner"></div></div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span>
+    <a href="/health">Status</a> ·
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+  </span>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+// ── Bootstrap ───────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Extract package name from path: /packages/:name
+  const parts = location.pathname.split('/').filter(Boolean);
+  const name  = parts[1];   // ["packages", "libssl"] → "libssl"
+  if (!name) {
+    document.getElementById('main').innerHTML =
+      '<div class="error">No package name in URL.</div>';
+    return;
+  }
+
+  const channel = new URLSearchParams(location.search).get('channel') ?? undefined;
+  document.title = `${name} — Freight Registry`;
+
+  await loadPackage(name, channel);
+});
+
+// ── Load & render ───────────────────────────────────────────────────────────
+
+async function loadPackage(name, channel) {
+  const main = document.getElementById('main');
+  try {
+    const [pkg, owners, readme] = await Promise.all([
+      API.getPackage(name, channel),
+      API.getOwners(name),
+      API.getReadme(name),
+    ]);
+
+    if (!pkg) {
+      main.innerHTML = `
+        <div class="error" style="margin-top:48px">
+          <h2>Package not found</h2>
+          <p>No package named <strong>${esc(name)}</strong> exists on this registry.</p>
+          <p><a href="/">← Back to search</a></p>
+        </div>`;
+      return;
+    }
+
+    const latest = pkg.versions?.[0] ?? {};
+    const deps   = latest.dependencies ?? {};
+    const ownerList = (owners.users ?? []).map(u => u.login ?? u);
+
+    // ── Build header ───────────────────────────────────────────────────────
+    const installLine = channel && channel !== 'stable'
+      ? `${esc(name)} = { version = "${esc(latest.version ?? pkg.latest)}", channel = "${esc(channel)}" }`
+      : `${esc(name)} = "${esc(latest.version ?? pkg.latest)}"`;
+
+    // ── Build keywords ─────────────────────────────────────────────────────
+    const kwHtml = (pkg.keywords ?? []).map(k =>
+      `<a href="/?q=${encodeURIComponent(k)}" class="badge keyword">${esc(k)}</a>`
+    ).join(' ');
+
+    // ── Build versions table ───────────────────────────────────────────────
+    const versionsHtml = (pkg.versions ?? []).map(v => `
+      <tr class="${v.yanked ? 'yanked' : ''}">
+        <td><a href="/packages/${esc(name)}?version=${esc(v.version)}">${esc(v.version)}</a>
+            ${v.yanked ? ' <span style="color:#f85149;font-size:11px">[yanked]</span>' : ''}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${esc((v.checksum ?? '').slice(0,12))}…</td>
+        <td>${v.build_system ? `<span class="badge">${esc(v.build_system)}</span>` : '—'}</td>
+        <td class="badge dl" style="border:none">${fmtNum(v.downloads)}</td>
+        <td>
+          <a href="/api/v1/packages/${esc(name)}/${esc(v.version)}/download"
+             style="font-size:12px;color:var(--muted)">↓ tar.gz</a>
+        </td>
+      </tr>`).join('');
+
+    // ── Build dependencies ─────────────────────────────────────────────────
+    const depEntries = Object.entries(deps);
+    const depsHtml = depEntries.length === 0
+      ? '<p style="color:var(--muted);font-size:13px">No dependencies.</p>'
+      : `<table class="dep-table">${depEntries.map(([k, v]) =>
+           `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table>`;
+
+    // ── Render README ──────────────────────────────────────────────────────
+    let readmeHtml = '';
+    if (readme) {
+      // Very minimal markdown: code fences, headers, paragraphs
+      readmeHtml = `<div class="readme">${renderMarkdown(readme)}</div>`;
+    }
+
+    // ── Assemble ───────────────────────────────────────────────────────────
+    main.innerHTML = `
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        <a href="/">← Registry</a> / ${esc(name)}
+      </p>
+
+      <div class="pkg-header">
+        <h1>
+          ${esc(name)}
+          ${channel && channel !== 'stable'
+            ? `<span class="badge channel" style="font-size:14px;vertical-align:middle">${esc(channel)}</span>`
+            : ''}
+        </h1>
+        <p class="pkg-desc-full">${esc(pkg.description ?? '')}</p>
+        <div class="pkg-meta" style="margin-bottom:8px">
+          <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
+          ${latest.build_system ? `<span class="badge">${esc(latest.build_system)}</span>` : ''}
+          ${kwHtml}
+        </div>
+      </div>
+
+      <div class="install-box">
+        <code id="install-code">${installLine}</code>
+        <button class="copy-btn" data-copy="${installLine}">Copy</button>
+      </div>
+
+      ${readmeHtml}
+
+      <div class="detail-grid">
+        <div>
+          <div class="versions-section">
+            <h2>Versions</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Version</th>
+                  <th>Checksum</th>
+                  <th>Build</th>
+                  <th>Downloads</th>
+                  <th>Download</th>
+                </tr>
+              </thead>
+              <tbody>${versionsHtml}</tbody>
+            </table>
+          </div>
+
+          <div style="margin-top:24px">
+            <h2 style="font-size:16px;margin-bottom:12px">Dependencies</h2>
+            ${depsHtml}
+          </div>
+        </div>
+
+        <div>
+          <div class="sidebar-box">
+            <h3>Metadata</h3>
+            <ul>
+              <li>
+                <span class="label">Latest</span>
+                <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
+              </li>
+              ${pkg.license ? `<li><span class="label">License</span><span>${esc(pkg.license)}</span></li>` : ''}
+              ${latest.upstream_url ? `<li><span class="label">Source</span>
+                <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">upstream ↗</a>
+              </li>` : ''}
+            </ul>
+          </div>
+
+          ${ownerList.length ? `
+          <div class="sidebar-box">
+            <h3>Owners</h3>
+            <ul>
+              ${ownerList.map(o => `<li><span>${esc(o)}</span></li>`).join('')}
+            </ul>
+          </div>` : ''}
+
+          <div class="sidebar-box">
+            <h3>Install</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">
+              Add to <code>freight.toml</code>:
+            </p>
+            <div style="background:var(--code-bg);border-radius:4px;padding:8px 12px">
+              <code style="font-family:var(--font-mono);font-size:12px;color:var(--green)">[dependencies]<br>
+              ${installLine}</code>
+            </div>
+          </div>
+
+          <div class="sidebar-box">
+            <h3>Quick links</h3>
+            <ul>
+              <li><a href="/api/v1/packages/${esc(name)}" style="font-size:13px">JSON metadata ↗</a></li>
+              <li><a href="/api/v1/packages/${esc(name)}/${esc(latest.version ?? pkg.latest)}/download"
+                     style="font-size:13px">Download latest ↗</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>`;
+  } catch (err) {
+    main.innerHTML = `<div class="error">Failed to load package: ${esc(err.message)}</div>`;
+  }
+}
+
+// ── Minimal markdown renderer (no external deps) ────────────────────────────
+
+function renderMarkdown(md) {
+  // Escape HTML first
+  let html = md
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Fenced code blocks
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+    `<pre><code${lang ? ` class="language-${lang}"` : ''}>${code.trimEnd()}</code></pre>`
+  );
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
+
+  // Bold / italic
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g,     '<em>$1</em>');
+
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  // Horizontal rule
+  html = html.replace(/^---+$/gm, '<hr style="border-color:var(--border)">');
+
+  // Paragraphs (double newline → <p>)
+  html = html
+    .split(/\n{2,}/)
+    .map(block => {
+      if (/^<(h[1-6]|pre|hr|ul|ol|li)/.test(block.trim())) return block;
+      return `<p>${block.replace(/\n/g, '<br>')}</p>`;
+    })
+    .join('\n');
+
+  return html;
+}
+</script>
+</body>
+</html>

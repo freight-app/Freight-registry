@@ -10,6 +10,7 @@ use axum::{
 };
 use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::AppState;
 
@@ -63,6 +64,26 @@ impl From<anyhow::Error> for ApiError {
         tracing::error!("{e:#}");
         Self::internal(e.to_string())
     }
+}
+
+/// Resolve a path to the `static/` directory.
+///
+/// At runtime, looks for `static/` relative to:
+/// 1. `FREIGHT_STATIC_DIR` env var
+/// 2. The directory of the running binary
+/// 3. The current working directory (dev fallback)
+fn static_dir() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("FREIGHT_STATIC_DIR") {
+        return std::path::PathBuf::from(p);
+    }
+    // Try next to the binary
+    if let Ok(exe) = std::env::current_exe() {
+        let candidate = exe.parent().unwrap_or(std::path::Path::new(".")).join("static");
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    std::path::PathBuf::from("static")
 }
 
 pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
@@ -124,11 +145,37 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/users/verify-email",               get(email::verify_email))
         .route("/api/v1/users/reset-password/request",     post(reset::request_reset))
         .route("/api/v1/users/reset-password/confirm",     post(reset::confirm_reset))
+        // ── Static web UI ──────────────────────────────────────────────────────
+        // /packages/:name  → package.html  (JS reads the name from the URL)
+        // /                → index.html    (search + hero)
+        // /style.css, /app.js, etc. → served by ServeDir fallback
+        .route("/packages/:_name", get(|()| serve_page("package.html")))
+        .fallback_service({
+            let dir = static_dir();
+            ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")))
+        })
         // Middleware (applied inside out: security headers → CORS → body limit)
         .layer(middleware::from_fn(security_headers))
         .layer(cors)
         .layer(DefaultBodyLimit::max(max_upload_bytes))
         .with_state(state)
+}
+
+/// Serve a specific HTML file from the static directory.
+async fn serve_page(filename: &'static str) -> impl IntoResponse {
+    let path = static_dir().join(filename);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            bytes,
+        ).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            b"404 - page not found".to_vec(),
+        ).into_response(),
+    }
 }
 
 async fn me(auth: crate::auth::AuthToken) -> Json<serde_json::Value> {

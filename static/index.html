@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+  </div>
+</nav>
+
+<!-- Hero (hidden when a search query is active) -->
+<div id="hero" class="hero">
+  <h1>The package registry for<br>C, C++, and friends</h1>
+  <p>Find and publish libraries for C, C++, Fortran, CUDA, HIP, D, Ada, and more.</p>
+  <div class="search-wrap">
+    <input type="search" id="hero-q" placeholder="Search 10,000+ packages…" autocomplete="off">
+    <button onclick="doSearch()">Search</button>
+  </div>
+</div>
+
+<!-- Stats bar -->
+<div id="stats-bar" class="stats-bar"></div>
+
+<main>
+  <!-- Results area -->
+  <div id="results"></div>
+  <div id="pagination" class="pagination"></div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span>
+    <a href="/health">Status</a> ·
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+  </span>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+const PAGE_SIZE = 20;
+let currentPage = 0;
+let currentQuery = '';
+let totalResults = 0;
+
+// ── Initialise ──────────────────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // Wire up search inputs
+  document.getElementById('hero-q').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+
+  // Parse ?q= from URL
+  const params = new URLSearchParams(location.search);
+  const q = params.get('q') ?? '';
+  if (q) {
+    document.getElementById('hero-q').value = q;
+    document.getElementById('nav-q').value  = q;
+    performSearch(q, 0);
+    document.getElementById('hero').style.display = 'none';
+  } else {
+    // No query: show featured / recent packages
+    loadFeatured();
+  }
+
+  loadStats();
+});
+
+// ── Search ─────────────────────────────────────────────────────────────────
+
+function doSearch() {
+  const q = (document.getElementById('hero-q').value
+          || document.getElementById('nav-q').value || '').trim();
+  if (!q) return;
+  history.pushState({}, '', `/?q=${encodeURIComponent(q)}`);
+  document.getElementById('hero').style.display = 'none';
+  performSearch(q, 0);
+}
+
+async function performSearch(q, offset) {
+  currentQuery = q;
+  currentPage  = Math.floor(offset / PAGE_SIZE);
+  const el = document.getElementById('results');
+  setLoading(el);
+  document.getElementById('pagination').innerHTML = '';
+  try {
+    const data = await API.search(q, { limit: PAGE_SIZE, offset });
+    totalResults = data.total ?? data.packages.length;
+    renderPackageCards(data.packages, el);
+    renderPagination();
+  } catch (err) {
+    setError(el, `Search error: ${err.message}`);
+  }
+}
+
+function renderPagination() {
+  const pages = Math.ceil(totalResults / PAGE_SIZE);
+  if (pages <= 1) return;
+  const el = document.getElementById('pagination');
+  const prev = `<button class="page-btn" ${currentPage === 0 ? 'disabled' : ''}
+    onclick="performSearch('${esc(currentQuery)}', ${(currentPage-1)*PAGE_SIZE})">← Prev</button>`;
+  const next = `<button class="page-btn" ${currentPage >= pages-1 ? 'disabled' : ''}
+    onclick="performSearch('${esc(currentQuery)}', ${(currentPage+1)*PAGE_SIZE})">Next →</button>`;
+  const info = `<span class="page-btn" style="cursor:default">
+    Page ${currentPage+1} of ${pages} (${totalResults} results)</span>`;
+  el.innerHTML = prev + info + next;
+}
+
+// ── Featured packages (empty query → browse all) ───────────────────────────
+
+async function loadFeatured() {
+  const el = document.getElementById('results');
+  setLoading(el);
+  try {
+    const data = await API.search('', { limit: PAGE_SIZE });
+    totalResults = data.total ?? 0;
+    if (data.packages.length === 0) {
+      el.innerHTML = `<div class="empty" style="padding-top:16px">
+        No packages published yet. Be the first to
+        <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">publish</a>!
+      </div>`;
+    } else {
+      renderPackageCards(data.packages, el);
+      renderPagination();
+    }
+  } catch (err) {
+    setError(el, 'Could not load packages: ' + err.message);
+  }
+}
+
+// ── Stats bar ──────────────────────────────────────────────────────────────
+
+async function loadStats() {
+  try {
+    const h = await API.health();
+    if (!h) return;
+    const bar = document.getElementById('stats-bar');
+    // health endpoint returns db/status/time; stats are in /api/v1/admin if admin
+    // For anonymous users, just show uptime badge
+    bar.innerHTML = `
+      <div class="stat">
+        <span class="stat-val">${h.status === 'ok' ? '✓' : '!'}</span>
+        <span class="stat-lbl">Status</span>
+      </div>`;
+  } catch {}
+}
+
+// ── Nav search override ───────────────────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  const navInput = document.getElementById('nav-q');
+  if (navInput) {
+    navInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && navInput.value.trim()) {
+        doSearch();
+      }
+    });
+  }
+});
+</script>
+</body>
+</html>

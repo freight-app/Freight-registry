@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use sha2::{Digest, Sha256};
-use sqlx::{AnyPool, FromRow};
+use sqlx::{AnyPool, FromRow, Row as _};
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -705,10 +705,26 @@ impl Db {
         .fetch_one(&self.pool)
         .await?;
 
-        let pkgs: Vec<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages
-             WHERE lower(name) LIKE lower(?) AND channel = ?
-               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)
-             ORDER BY name LIMIT ? OFFSET ?"))
+        // Single query: fetch packages + their latest non-yanked version via a window function.
+        // ROW_NUMBER() OVER (PARTITION BY package_id ORDER BY created_at DESC) is supported
+        // by SQLite 3.25+ and all modern Postgres versions.
+        let rows = sqlx::query(&self.q_sql(
+            "WITH latest_v AS (
+                 SELECT package_id,
+                        version, checksum, yanked, downloads, dependencies, upstream_url, build_system,
+                        ROW_NUMBER() OVER (PARTITION BY package_id ORDER BY created_at DESC) AS rn
+                 FROM versions WHERE yanked = 0
+             )
+             SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords,
+                    v.version     AS v_version,     v.checksum      AS v_checksum,
+                    v.yanked      AS v_yanked,       v.downloads     AS v_downloads,
+                    v.dependencies AS v_deps,        v.upstream_url  AS v_upstream_url,
+                    v.build_system AS v_build_system
+             FROM packages p
+             LEFT JOIN latest_v v ON v.package_id = p.id AND v.rn = 1
+             WHERE lower(p.name) LIKE lower(?) AND p.channel = ?
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
+             ORDER BY p.name LIMIT ? OFFSET ?"))
         .bind(&pattern)
         .bind(channel)
         .bind(limit)
@@ -716,15 +732,29 @@ impl Db {
         .fetch_all(&self.pool)
         .await?;
 
-        let mut results = Vec::with_capacity(pkgs.len());
-        for pkg in pkgs {
-            let latest: Option<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                        upstream_url, build_system FROM versions
-                 WHERE package_id = ? AND yanked = 0 ORDER BY version DESC LIMIT 1"))
-            .bind(pkg.id)
-            .fetch_optional(&self.pool)
-            .await?;
-            results.push((pkg, latest));
+        let mut results = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let pkg = PackageRow {
+                id:          row.try_get("id")?,
+                name:        row.try_get("name")?,
+                channel:     row.try_get("channel")?,
+                description: row.try_get("description")?,
+                license:     row.try_get("license")?,
+                keywords:    row.try_get("keywords")?,
+            };
+            let ver = match row.try_get::<String, _>("v_version") {
+                Ok(version) => Some(VersionRow {
+                    version,
+                    checksum:     row.try_get("v_checksum").unwrap_or_default(),
+                    yanked:       row.try_get("v_yanked").unwrap_or(0),
+                    downloads:    row.try_get("v_downloads").unwrap_or(0),
+                    dependencies: row.try_get("v_deps").unwrap_or_default(),
+                    upstream_url: row.try_get("v_upstream_url").unwrap_or_default(),
+                    build_system: row.try_get("v_build_system").unwrap_or_default(),
+                }),
+                Err(_) => None,
+            };
+            results.push((pkg, ver));
         }
         Ok((results, total))
     }

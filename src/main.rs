@@ -12,10 +12,12 @@
 //!   freight-registry --data /var/lib/freight-registry serve \
 //!       --base-url https://freight.example.com
 
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use serde::Deserialize;
+use sqlx::Row as _;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use freight_registry::{
@@ -129,6 +131,23 @@ enum Command {
     Token {
         #[command(subcommand)]
         command: TokenCmd,
+    },
+    /// Bulk-import metadata-only package stubs from a directory of TOML files.
+    ///
+    /// Each .toml file must have a `[package]` section with at least `name` and
+    /// `version`. All packages are inserted as metadata-only entries (no tarballs).
+    Import {
+        /// Directory containing the stub .toml files
+        dir: PathBuf,
+        /// Registry user who will own the imported packages (default: vcpkg)
+        #[arg(long, default_value = "vcpkg")]
+        user: String,
+        /// Channel to import into (default: stable)
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        /// Number of rows per SQL batch (default: 500)
+        #[arg(long, default_value_t = 500)]
+        batch: usize,
     },
 }
 
@@ -475,6 +494,10 @@ async fn main() -> Result<()> {
                 }
             }
         },
+
+        Command::Import { dir, user, channel, batch: batch_size } => {
+            cmd_import(&db, &dir, &user, &channel, batch_size).await?;
+        }
     }
 
     Ok(())
@@ -489,4 +512,266 @@ fn prompt_password() -> Result<String> {
     let mut pw = String::new();
     io::stdin().read_line(&mut pw)?;
     Ok(pw.trim_end_matches('\n').to_string())
+}
+
+// ── Bulk import ───────────────────────────────────────────────────────────────
+
+/// TOML stub file format (as produced by vcpkg-scraper).
+#[derive(Deserialize)]
+struct StubPackage {
+    name:        String,
+    version:     String,
+    description: Option<String>,
+    license:     Option<String>,
+    url:         Option<String>,
+    build:       Option<String>,
+    #[allow(dead_code)]
+    keywords:    Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct StubFile {
+    package:     StubPackage,
+    #[serde(default)]
+    dependencies: HashMap<String, toml::Value>,
+}
+
+async fn cmd_import(
+    db:         &Db,
+    dir:        &PathBuf,
+    user:       &str,
+    channel:    &str,
+    batch_size: usize,
+) -> Result<()> {
+    // Resolve the owner account.
+    let owner = db.get_user_by_username(user).await?
+        .ok_or_else(|| anyhow::anyhow!("no user named '{user}'"))?;
+    let owner_id = owner.id;
+    let is_pg = db.is_postgres();
+    let pool  = db.pool().clone();
+
+    // ── Parse all .toml stub files ──────────────────────────────────────────
+    let entries: Vec<_> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |x| x == "toml"))
+        .collect();
+    let total_files = entries.len();
+    println!("Scanning {total_files} files in {} …", dir.display());
+
+    struct Stub { pkg: StubPackage, deps_json: String }
+
+    let mut stubs: Vec<Stub> = Vec::with_capacity(total_files);
+    let mut parse_errors = 0usize;
+
+    for entry in &entries {
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c)  => c,
+            Err(e) => { tracing::warn!("read error {}: {e}", entry.path().display()); parse_errors += 1; continue; }
+        };
+        match toml::from_str::<StubFile>(&content) {
+            Ok(sf) => {
+                // Convert [dependencies] to a JSON object {"name":"version",...}.
+                let deps: HashMap<String, String> = sf.dependencies.iter()
+                    .map(|(k, v)| {
+                        let ver = match v {
+                            toml::Value::String(s) => s.clone(),
+                            _ => "*".to_string(),
+                        };
+                        (k.clone(), ver)
+                    })
+                    .collect();
+                let deps_json = serde_json::to_string(&deps).unwrap_or_else(|_| "{}".to_string());
+                stubs.push(Stub { pkg: sf.package, deps_json });
+            }
+            Err(e) => {
+                tracing::debug!("parse error {}: {e}", entry.path().display());
+                parse_errors += 1;
+            }
+        }
+    }
+
+    let total = stubs.len();
+    println!("Parsed {total}/{total_files} stubs ({parse_errors} skipped).");
+
+    // ── Phase 1: batch-upsert package rows ──────────────────────────────────
+    // Deduplicate by (lower(name), channel): Postgres rejects "ON CONFLICT DO UPDATE"
+    // when the same target row would be touched twice in a single batch.
+    // We keep one representative stub per package (the first one encountered).
+    println!("Phase 1/3 — upserting packages …");
+    let mut seen: HashMap<String, ()> = HashMap::with_capacity(total);
+    let unique_pkgs: Vec<&Stub> = stubs.iter()
+        .filter(|s| seen.insert(s.pkg.name.to_lowercase(), ()).is_none())
+        .collect();
+    let unique_count = unique_pkgs.len();
+    println!("  {unique_count} distinct package names");
+
+    let mut pkg_done = 0usize;
+    for chunk in unique_pkgs.chunks(batch_size) {
+        let n   = chunk.len();
+        let sql = batch_pkg_upsert_sql(n, is_pg);
+        let mut q = sqlx::query(&sql);
+        for stub in chunk {
+            let kw = stub.pkg.keywords.as_ref().map(|ks| ks.join(","));
+            q = q
+                .bind(&stub.pkg.name)
+                .bind(channel)
+                .bind(stub.pkg.description.as_deref())
+                .bind(stub.pkg.license.as_deref())
+                .bind(kw);
+        }
+        q.execute(&pool).await?;
+        pkg_done += n;
+        if pkg_done % 5000 < batch_size || pkg_done == unique_count {
+            println!("  {pkg_done}/{unique_count}");
+        }
+    }
+    println!("Package upserts done.");
+
+    // ── Phase 2: resolve package IDs ────────────────────────────────────────
+    println!("Phase 2/3 — resolving package IDs …");
+    let all_lower: Vec<String> = stubs.iter().map(|s| s.pkg.name.to_lowercase()).collect();
+    let mut name_to_id: HashMap<String, i64> = HashMap::with_capacity(total);
+
+    for chunk in all_lower.chunks(batch_size) {
+        let n   = chunk.len();
+        let sql = batch_id_select_sql(n, is_pg);
+        let mut q = sqlx::query(&sql).bind(channel);
+        for name in chunk {
+            q = q.bind(name.as_str());
+        }
+        let rows = q.fetch_all(&pool).await?;
+        for row in rows {
+            let id:   i64   = row.try_get("id")?;
+            let name: String = row.try_get("name")?;
+            name_to_id.insert(name.to_lowercase(), id);
+        }
+    }
+    println!("Resolved {}/{total} IDs.", name_to_id.len());
+
+    // ── Phase 3a: batch-insert versions ─────────────────────────────────────
+    println!("Phase 3/3 — inserting versions and owners …");
+    let mut ver_inserted = 0i64;
+    let mut own_inserted = 0i64;
+
+    for chunk in stubs.chunks(batch_size) {
+        // Collect (package_id, stub) pairs for rows that resolved.
+        let resolved: Vec<(i64, &Stub)> = chunk.iter()
+            .filter_map(|s| {
+                let id = *name_to_id.get(&s.pkg.name.to_lowercase())?;
+                Some((id, s))
+            })
+            .collect();
+        if resolved.is_empty() { continue; }
+
+        let n = resolved.len();
+
+        // Version insert
+        let ver_sql = batch_version_insert_sql(n, is_pg);
+        let mut vq = sqlx::query(&ver_sql);
+        for (pkg_id, stub) in &resolved {
+            vq = vq
+                .bind(*pkg_id)
+                .bind(&stub.pkg.version)
+                .bind("")                              // checksum — empty for metadata-only
+                .bind(stub.deps_json.as_str())
+                .bind(stub.pkg.url.as_deref())
+                .bind(stub.pkg.build.as_deref());
+        }
+        let vr = vq.execute(&pool).await?;
+        ver_inserted += vr.rows_affected() as i64;
+
+        // Owner insert
+        let own_sql = batch_owner_insert_sql(n, is_pg);
+        let mut oq = sqlx::query(&own_sql);
+        for (pkg_id, _) in &resolved {
+            oq = oq.bind(*pkg_id).bind(owner_id);
+        }
+        let or = oq.execute(&pool).await?;
+        own_inserted += or.rows_affected() as i64;
+    }
+
+    println!("Versions inserted: {ver_inserted}");
+    println!("Owners assigned:   {own_inserted}");
+    println!("Import complete.");
+    Ok(())
+}
+
+// ── SQL builders ──────────────────────────────────────────────────────────────
+
+fn batch_pkg_upsert_sql(n: usize, pg: bool) -> String {
+    let mut s = String::from(
+        "INSERT INTO packages (name, channel, description, license, keywords) VALUES "
+    );
+    for i in 0..n {
+        if i > 0 { s.push(','); }
+        if pg {
+            let b = i * 5;
+            s.push_str(&format!("(${},${},${},${},${}) ", b+1, b+2, b+3, b+4, b+5));
+        } else {
+            s.push_str("(?,?,?,?,?)");
+        }
+    }
+    if pg {
+        s.push_str(
+            " ON CONFLICT (lower(name), lower(channel)) DO UPDATE SET \
+             description = COALESCE(excluded.description, packages.description), \
+             license     = COALESCE(excluded.license,     packages.license), \
+             keywords    = COALESCE(excluded.keywords,    packages.keywords)"
+        );
+    } else {
+        s.push_str(
+            " ON CONFLICT(name, channel) DO UPDATE SET \
+             description = COALESCE(excluded.description, description), \
+             license     = COALESCE(excluded.license,     license), \
+             keywords    = COALESCE(excluded.keywords,    keywords)"
+        );
+    }
+    s
+}
+
+fn batch_id_select_sql(n: usize, pg: bool) -> String {
+    let mut s = if pg {
+        "SELECT id, name FROM packages WHERE lower(channel) = lower($1) AND lower(name) IN (".to_string()
+    } else {
+        "SELECT id, name FROM packages WHERE lower(channel) = lower(?) AND lower(name) IN (".to_string()
+    };
+    for i in 0..n {
+        if i > 0 { s.push(','); }
+        if pg { s.push_str(&format!("${}", i + 2)); } else { s.push('?'); }
+    }
+    s.push(')');
+    s
+}
+
+fn batch_version_insert_sql(n: usize, pg: bool) -> String {
+    let mut s = String::from(
+        "INSERT INTO versions \
+         (package_id, version, checksum, dependencies, upstream_url, build_system) VALUES "
+    );
+    for i in 0..n {
+        if i > 0 { s.push(','); }
+        if pg {
+            let b = i * 6;
+            s.push_str(&format!("(${},${},${},${},${},${}) ", b+1, b+2, b+3, b+4, b+5, b+6));
+        } else {
+            s.push_str("(?,?,?,?,?,?)");
+        }
+    }
+    s.push_str(" ON CONFLICT DO NOTHING");
+    s
+}
+
+fn batch_owner_insert_sql(n: usize, pg: bool) -> String {
+    let mut s = String::from("INSERT INTO package_owners (package_id, user_id) VALUES ");
+    for i in 0..n {
+        if i > 0 { s.push(','); }
+        if pg {
+            let b = i * 2;
+            s.push_str(&format!("(${},${}) ", b+1, b+2));
+        } else {
+            s.push_str("(?,?)");
+        }
+    }
+    s.push_str(" ON CONFLICT DO NOTHING");
+    s
 }

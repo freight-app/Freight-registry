@@ -15,13 +15,15 @@ fn unix_now() -> i64 {
 /// Rewrite SQL for the Postgres backend:
 /// - `?` placeholders → `$1`, `$2`, …
 /// - `INSERT OR IGNORE INTO` → `INSERT INTO … ON CONFLICT DO NOTHING`
+/// - `ON CONFLICT(name, channel)` → `ON CONFLICT(lower(name), lower(channel))`
+///   (packages uses a functional unique index, not a plain UNIQUE constraint)
 pub fn pg_sql(sql: &str) -> String {
     let (sql, insert_ignore) = if sql.contains("OR IGNORE ") {
         (std::borrow::Cow::Owned(sql.replace("OR IGNORE ", "")), true)
     } else {
         (std::borrow::Cow::Borrowed(sql), false)
     };
-    let mut out = String::with_capacity(sql.len() + 20);
+    let mut out = String::with_capacity(sql.len() + 40);
     let mut n = 0usize;
     for ch in sql.chars() {
         if ch == '?' {
@@ -34,6 +36,11 @@ pub fn pg_sql(sql: &str) -> String {
     }
     if insert_ignore {
         out.push_str(" ON CONFLICT DO NOTHING");
+    }
+    // The packages table uses a functional index on (lower(name), lower(channel)).
+    // ON CONFLICT must reference the exact index expression.
+    if out.contains("ON CONFLICT(name, channel)") {
+        out = out.replace("ON CONFLICT(name, channel)", "ON CONFLICT(lower(name), lower(channel))");
     }
     out
 }
@@ -165,6 +172,13 @@ impl Db {
     fn q_sql(&self, sql: &str) -> String {
         if self.is_postgres { pg_sql(sql) } else { sql.to_owned() }
     }
+
+    /// Returns `true` when connected to PostgreSQL.
+    pub fn is_postgres(&self) -> bool { self.is_postgres }
+
+    /// Returns a reference to the underlying connection pool.
+    /// Used by bulk-import tooling that builds dynamic SQL directly.
+    pub fn pool(&self) -> &AnyPool { &self.pool }
 
 
     /// Open an in-memory SQLite database. Only for use in tests.

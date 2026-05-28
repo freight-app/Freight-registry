@@ -172,12 +172,19 @@ pub fn extract_file(tarball: &[u8], filename: &str) -> Option<String> {
     let gz = GzDecoder::new(tarball);
     let mut ar = Archive::new(gz);
     for entry in ar.entries().ok()? {
-        let mut entry = entry.ok()?;
-        let path = entry.path().ok()?;
-        if path.file_name()?.to_string_lossy().eq_ignore_ascii_case(filename) {
+        // Skip unreadable entries rather than aborting the whole search.
+        let mut entry = match entry { Ok(e) => e, Err(_) => continue };
+        let path = match entry.path() { Ok(p) => p, Err(_) => continue };
+        // Directories (e.g. the leading `.`) have no file_name(); skip them.
+        let name = match path.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => continue,
+        };
+        if name.eq_ignore_ascii_case(filename) {
             let mut content = String::new();
-            std::io::Read::read_to_string(&mut entry, &mut content).ok()?;
-            return Some(content);
+            return std::io::Read::read_to_string(&mut entry, &mut content)
+                .ok()
+                .map(|_| content);
         }
     }
     None
@@ -191,13 +198,16 @@ fn extract_dependencies_inner(tarball: &[u8]) -> Option<HashMap<String, String>>
     let mut ar = Archive::new(gz);
 
     for entry in ar.entries().ok()? {
-        let mut entry = entry.ok()?;
-        let path = entry.path().ok()?;
-        let file_name = path.file_name()?.to_string_lossy().into_owned();
+        let mut entry = match entry { Ok(e) => e, Err(_) => continue };
+        let path = match entry.path() { Ok(p) => p, Err(_) => continue };
+        let file_name = match path.file_name() {
+            Some(n) => n.to_string_lossy().into_owned(),
+            None => continue,
+        };
         if file_name != "freight.toml" { continue; }
 
         let mut content = String::new();
-        std::io::Read::read_to_string(&mut entry, &mut content).ok()?;
+        if std::io::Read::read_to_string(&mut entry, &mut content).is_err() { continue; }
 
         #[derive(serde::Deserialize)]
         struct Manifest {

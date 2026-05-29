@@ -727,8 +727,9 @@ impl Db {
         let pattern = format!("%{query}%");
 
         let total: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM packages
-             WHERE lower(name) LIKE lower(?) AND channel = ?
+             WHERE (lower(name) LIKE lower(?) OR lower(keywords) LIKE lower(?)) AND channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"))
+        .bind(&pattern)
         .bind(&pattern)
         .bind(channel)
         .fetch_one(&self.pool)
@@ -753,11 +754,12 @@ impl Db {
                      (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
                       ORDER BY created_at DESC LIMIT 1))
                AND v.yanked = 0
-             WHERE lower(p.name) LIKE lower(?) AND p.channel = ?
+             WHERE (lower(p.name) LIKE lower(?) OR lower(p.keywords) LIKE lower(?)) AND p.channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
              ORDER BY {order} LIMIT ? OFFSET ?"
         );
         let rows = sqlx::query(&self.q_sql(&sql))
+        .bind(&pattern)
         .bind(&pattern)
         .bind(channel)
         .bind(limit)

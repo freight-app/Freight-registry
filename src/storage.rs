@@ -62,21 +62,22 @@ impl Storage {
     fn local_path(root: &PathBuf, name: &str, version: &str) -> PathBuf {
         root.join(name)
             .join(version)
-            .join(format!("{name}-{version}.tar.gz"))
+            .join("source.tar.gz")
     }
 
     fn s3_key(name: &str, version: &str) -> ObjPath {
-        ObjPath::from(format!("{name}/{version}/{name}-{version}.tar.gz"))
+        ObjPath::from(format!("{name}/{version}/source.tar.gz"))
     }
 
     fn local_prebuilt_path(root: &PathBuf, name: &str, version: &str, triple: &str) -> PathBuf {
         root.join(name)
             .join(version)
+            .join(triple)
             .join(format!("{name}-{version}-{triple}.tar.gz"))
     }
 
     fn s3_prebuilt_key(name: &str, version: &str, triple: &str) -> ObjPath {
-        ObjPath::from(format!("{name}/{version}/{name}-{version}-{triple}.tar.gz"))
+        ObjPath::from(format!("{name}/{version}/{triple}/{name}-{version}-{triple}.tar.gz"))
     }
 
     // ── Presigned URLs ────────────────────────────────────────────────────────
@@ -193,11 +194,11 @@ impl Storage {
         }
     }
 
-    /// Store a README for a package (once per package name, overwritten on each publish).
-    pub async fn save_readme(&self, name: &str, content: &[u8]) -> Result<()> {
+    /// Store the README for a specific package version.
+    pub async fn save_readme(&self, name: &str, version: &str, content: &[u8]) -> Result<()> {
         match &self.backend {
             Backend::Local(root) => {
-                let path = root.join(name).join("README.md");
+                let path = root.join(name).join(version).join("README.md");
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent).await?;
                 }
@@ -205,22 +206,22 @@ impl Storage {
             }
             Backend::S3(store) => {
                 store
-                    .put(&ObjPath::from(format!("{name}/README.md")), content.to_vec().into())
+                    .put(&ObjPath::from(format!("{name}/{version}/README.md")), content.to_vec().into())
                     .await?;
             }
         }
         Ok(())
     }
 
-    /// Read the stored README for a package. Returns `None` if not present.
-    pub async fn read_readme(&self, name: &str) -> Option<String> {
+    /// Read the README for a specific package version. Returns `None` if not present.
+    pub async fn read_readme(&self, name: &str, version: &str) -> Option<String> {
         let bytes = match &self.backend {
             Backend::Local(root) => {
-                tokio::fs::read(root.join(name).join("README.md")).await.ok()?
+                tokio::fs::read(root.join(name).join(version).join("README.md")).await.ok()?
             }
             Backend::S3(store) => {
                 store
-                    .get(&ObjPath::from(format!("{name}/README.md")))
+                    .get(&ObjPath::from(format!("{name}/{version}/README.md")))
                     .await
                     .ok()?
                     .bytes()

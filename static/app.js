@@ -27,9 +27,9 @@ const API = {
     return r.json();
   },
 
-  /** GET /api/v1/packages/:name/readme */
-  async getReadme(name) {
-    const r = await fetch(`/api/v1/packages/${encodeURIComponent(name)}/readme`);
+  /** GET /api/v1/packages/:name/:version/readme */
+  async getReadme(name, version) {
+    const r = await fetch(`/api/v1/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/readme`);
     if (!r.ok) return null;
     return r.text();
   },

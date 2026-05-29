@@ -18,13 +18,13 @@ pub struct ChannelParam {
     channel: Option<String>,
 }
 
-// ── GET /api/v1/packages/:name/readme ─────────────────────────────────────────
+// ── GET /api/v1/packages/:name/:version/readme ────────────────────────────────
 
 pub async fn get_readme(
     State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
+    Path((name, version)): Path<(String, String)>,
 ) -> Response {
-    match state.storage.read_readme(&name).await {
+    match state.storage.read_readme(&name, &version).await {
         Some(content) => (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
@@ -35,16 +35,16 @@ pub async fn get_readme(
     }
 }
 
-// ── PUT /api/v1/packages/:name/readme ─────────────────────────────────────────
+// ── PUT /api/v1/packages/:name/:version/readme ────────────────────────────────
 //
-// Replaces (or sets for the first time) the README for a package.
+// Replaces (or sets for the first time) the README for a specific version.
 // Body is raw Markdown text (Content-Type: text/markdown or text/plain).
 // Caller must be an owner of the package or a registry admin.
 
 pub async fn put_readme(
     State(state): State<Arc<AppState>>,
     auth: PublishToken,
-    Path(name): Path<String>,
+    Path((name, version)): Path<(String, String)>,
     Query(params): Query<ChannelParam>,
     body: String,
 ) -> ApiResult<Json<Value>> {
@@ -69,7 +69,7 @@ pub async fn put_readme(
 
     state
         .storage
-        .save_readme(&name, body.as_bytes())
+        .save_readme(&name, &version, body.as_bytes())
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -77,7 +77,7 @@ pub async fn put_readme(
         Some(auth.user.id),
         "update_readme",
         Some(&name),
-        None,
+        Some(&version),
         None,
     );
 

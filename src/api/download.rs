@@ -25,7 +25,7 @@ pub struct ChannelParam {
 
 /// Download priority chain:
 ///
-/// 1. `FREIGHT_DOWNLOAD_URL` configured → `302` to `{url}/{name}/{version}/{name}-{version}.tar.gz`
+/// 1. `FREIGHT_DOWNLOAD_URL` configured → `302` to `{url}/{name}/{version}/source.tar.gz`
 ///    (CDN, public S3 bucket, nginx serving the tarballs directory, …)
 ///
 /// 2. S3 backend, no explicit download URL → `302` to a presigned S3 URL (15 min TTL).
@@ -66,7 +66,7 @@ pub async fn download(
     if let Some(ref base) = state.download_url {
         state.db.increment_downloads(&name, &version, channel);
         state.metrics.downloads_served.inc();
-        let url = format!("{base}/{name}/{version}/{name}-{version}.tar.gz");
+        let url = format!("{base}/{name}/{version}/source.tar.gz");
         return redirect(&url);
     }
 
@@ -101,11 +101,10 @@ pub async fn download(
     state.metrics.downloads_served.inc();
     state.db.increment_downloads(&name, &version, channel);
 
-    let filename = format!("{name}-{version}.tar.gz");
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/gzip")
-        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{filename}\""))
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"source.tar.gz\"")
         .header("x-checksum-sha256", &ver.checksum)
         .body(Body::from(data))
         .map_err(|e| ApiError::internal(e.to_string()))

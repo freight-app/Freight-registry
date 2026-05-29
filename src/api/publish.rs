@@ -134,7 +134,7 @@ pub async fn publish(
     }
 
     if let Some(ref content) = readme {
-        let _ = state.storage.save_readme(&meta.name, content.as_bytes()).await;
+        let _ = state.storage.save_readme(&meta.name, &meta.vers, content.as_bytes()).await;
     }
 
     state

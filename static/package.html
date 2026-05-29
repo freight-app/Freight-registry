@@ -74,10 +74,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadPackage(name, channel, selectedVersion) {
   const main = document.getElementById('main');
   try {
-    const [pkg, owners, readme] = await Promise.all([
+    const [pkg, owners] = await Promise.all([
       API.getPackage(name, channel),
       API.getOwners(name),
-      API.getReadme(name),
     ]);
 
     if (!pkg) {
@@ -97,6 +96,9 @@ async function loadPackage(name, channel, selectedVersion) {
     const latest    = activeVer;   // "latest" alias kept for template compat
     const deps      = latest.dependencies ?? {};
     const ownerList = (owners.users ?? []).map(u => u.login ?? u);
+
+    // README is per-version — fetch after we know which version is active
+    const readme = await API.getReadme(name, activeVer.version);
 
     // Total downloads across all versions
     const totalDownloads = (pkg.versions ?? []).reduce((s, v) => s + (v.downloads ?? 0), 0);

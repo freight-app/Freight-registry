@@ -122,7 +122,7 @@ pub async fn download(
 
     // ── Priority 1: explicit download URL ────────────────────────────────────
     if let Some(ref base) = state.download_url {
-        let url = format!("{base}/{name}/{version}/{name}-{version}-{triple}.tar.gz");
+        let url = format!("{base}/{name}/{version}/{triple}/{name}-{version}-{triple}.tar.gz");
         return Response::builder()
             .status(StatusCode::FOUND)
             .header(header::LOCATION, url)

@@ -709,3 +709,109 @@ tr.version-active td { background: var(--accent-dim); }
 }
 .page-btn:hover, .page-btn.active { border-color: var(--accent); color: var(--accent); }
 .page-btn:disabled { opacity: .35; cursor: default; }
+
+/* ── Gear icon (settings) ────────────────────────────────────────────────── */
+
+.nav-settings-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  transition: color .15s;
+}
+.nav-settings-btn:hover { color: var(--text); }
+
+/* ── Settings modal ──────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 440px;
+  max-width: calc(100vw - 32px);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-header h2 { margin: 0; font-size: 18px; }
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+}
+.modal-close:hover { color: var(--text); }
+
+.modal-section-title { margin: 0 0 4px; font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.modal-section-hint  { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+
+.modal-footer { display: flex; justify-content: flex-end; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-primary:hover { opacity: .85; }
+
+/* ── Channel toggles inside settings modal ───────────────────────────────── */
+
+.settings-channels { display: flex; flex-direction: column; gap: 4px; }
+
+.settings-channel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .12s;
+}
+.settings-channel-row:hover { background: rgba(255,255,255,.04); }
+.settings-channel-locked { opacity: .6; cursor: default; }
+
+.settings-channel-name { font-size: 14px; flex: 1; }
+.settings-channel-hint { font-size: 12px; color: var(--muted); }
+
+.settings-channel-cb {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.settings-channel-locked .settings-channel-cb { cursor: default; }
+
+/* ── Supports cell in versions table ─────────────────────────────────────── */
+
+.supports-cell { white-space: nowrap; }

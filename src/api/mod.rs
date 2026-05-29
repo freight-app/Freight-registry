@@ -16,6 +16,7 @@ use crate::AppState;
 
 pub mod admin;
 pub mod audit;
+pub mod channels;
 pub mod delete;
 pub mod download;
 pub mod email;
@@ -110,6 +111,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/metrics",                                  get(metrics_handler::metrics))
         .route("/api/v1/stats",                             get(stats::stats))
         .route("/api/v1/keywords",                          get(keywords::keywords))
+        .route("/api/v1/channels",                          get(channels::list_channels))
         // Public read
         .route("/api/v1/packages/:name",                             get(packages::get_package))
         .route("/api/v1/packages/:name/:version/readme",              get(readme::get_readme).put(readme::put_readme))

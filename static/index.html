@@ -26,6 +26,9 @@
     <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
     <a id="nav-auth" href="/login">Login</a>
   </div>
+  <button class="nav-settings-btn" id="nav-settings" aria-label="Settings" title="Settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
   <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
       <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
@@ -49,14 +52,8 @@
 <main>
   <!-- Keyword cloud (shown in no-query state) -->
   <div id="kw-cloud"></div>
-  <!-- Filter bar (shown always) -->
+  <!-- Filter bar (shown when search is active) -->
   <div id="filter-bar" class="filter-bar" style="display:none">
-    <span class="filter-label">Channel:</span>
-    <div class="filter-group" id="channel-btns">
-      <button class="filter-btn active" data-channel="stable">stable</button>
-      <button class="filter-btn" data-channel="experimental">experimental</button>
-      <button class="filter-btn" data-channel="">all</button>
-    </div>
     <select class="sort-select" id="sort-select" title="Sort order">
       <option value="name">A–Z</option>
       <option value="downloads">Most downloaded</option>
@@ -83,7 +80,6 @@
 const PAGE_SIZE = 20;
 let currentPage    = 0;
 let currentQuery   = '';
-let currentChannel = 'stable';
 let currentSort    = 'name';
 let totalResults   = 0;
 
@@ -93,16 +89,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Wire up search inputs
   document.getElementById('hero-q').addEventListener('keydown', e => {
     if (e.key === 'Enter') doSearch();
-  });
-
-  // Channel filter wiring
-  document.querySelectorAll('#channel-btns .filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#channel-btns .filter-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentChannel = btn.dataset.channel;
-      performSearch(currentQuery, 0);
-    });
   });
 
   // Sort select wiring
@@ -158,7 +144,6 @@ async function performSearch(q, offset) {
   document.getElementById('kw-cloud').innerHTML = '';
   try {
     const opts = { limit: PAGE_SIZE, offset, sort: currentSort };
-    if (currentChannel) opts.channel = currentChannel;
     const data = await API.search(q, opts);
     totalResults = data.total ?? data.packages.length;
     renderPackageCards(data.packages, el);
@@ -188,10 +173,10 @@ async function loadFeatured() {
   const kwEl  = document.getElementById('kw-cloud');
   setLoading(el);
   try {
-    const opts = { limit: PAGE_SIZE, channel: currentChannel || undefined, sort: currentSort };
+    const opts = { limit: PAGE_SIZE, sort: currentSort };
     const [data, kwData] = await Promise.all([
       API.search('', opts),
-      API.keywords({ channel: currentChannel || undefined }),
+      API.keywords(),
     ]);
     totalResults = data.total ?? 0;
     renderKeywordCloud(kwData?.keywords ?? [], kwEl);

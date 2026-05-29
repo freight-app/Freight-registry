@@ -18,8 +18,12 @@ pub struct SearchParams {
     limit: i64,
     #[serde(default)]
     offset: i64,
+    /// Single channel (legacy). Ignored when `channels` is present.
     #[serde(default)]
     channel: Option<String>,
+    /// Comma-separated list of channels to search across, e.g. `stable,experimental`.
+    #[serde(default)]
+    channels: Option<String>,
     /// Sort order: "name" (default), "downloads", "newest"
     #[serde(default)]
     sort: Option<String>,
@@ -36,13 +40,22 @@ pub async fn search_packages(
         return Err(ApiError::too_many_requests());
     }
 
-    let query   = params.q.as_deref().unwrap_or("");
-    let limit   = params.limit.clamp(1, 100);
-    let offset  = params.offset.max(0);
-    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
-    let sort    = params.sort.as_deref().unwrap_or("name");
+    let query  = params.q.as_deref().unwrap_or("");
+    let limit  = params.limit.clamp(1, 100);
+    let offset = params.offset.max(0);
+    let sort   = params.sort.as_deref().unwrap_or("name");
 
-    let (results, total) = state.db.search_packages(query, channel, limit, offset, sort).await?;
+    // Resolve channel list: `channels` (multi) takes precedence over `channel` (single).
+    let channels_owned: Vec<String> = if let Some(ref cs) = params.channels {
+        cs.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    } else {
+        vec![params.channel.clone().unwrap_or_else(|| DEFAULT_CHANNEL.to_string())]
+    };
+    let channels: Vec<&str> = channels_owned.iter().map(String::as_str).collect();
+    // Use the first channel as the representative for per-result URLs / mirror queries.
+    let primary_channel = channels.first().copied().unwrap_or(DEFAULT_CHANNEL);
+
+    let (results, total) = state.db.search_packages(query, &channels, limit, offset, sort).await?;
 
     let mut local_names = std::collections::HashSet::new();
     let mut packages: Vec<Value> = results
@@ -50,7 +63,7 @@ pub async fn search_packages(
         .filter_map(|(pkg, latest)| {
             let latest = latest?;
             local_names.insert(pkg.name.to_lowercase());
-            let url = download_url(&state.base_url, &pkg.name, &latest.version, channel);
+            let url = download_url(&state.base_url, &pkg.name, &latest.version, &pkg.channel);
             let keywords: Vec<&str> = pkg.keywords.as_deref()
                 .map(|s| s.split(',').map(str::trim).filter(|k| !k.is_empty()).collect())
                 .unwrap_or_default();
@@ -74,10 +87,10 @@ pub async fn search_packages(
 
     // Merge upstream results for packages not in the local registry.
     if let Some(ref upstream) = state.mirror_upstream {
-        let url = if channel == DEFAULT_CHANNEL {
+        let url = if primary_channel == DEFAULT_CHANNEL {
             format!("{upstream}/api/v1/search?q={query}&limit={limit}&offset={offset}")
         } else {
-            format!("{upstream}/api/v1/search?q={query}&limit={limit}&offset={offset}&channel={channel}")
+            format!("{upstream}/api/v1/search?q={query}&limit={limit}&offset={offset}&channel={primary_channel}")
         };
         if let Ok(resp) = reqwest::get(&url).await {
             if let Ok(body) = resp.json::<Value>().await {

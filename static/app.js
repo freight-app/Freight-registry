@@ -7,11 +7,12 @@
 // ── API helpers ────────────────────────────────────────────────────────────
 
 const API = {
-  /** GET /api/v1/search?q=&limit=&offset=&channel=&sort= */
-  async search(q, { limit = 20, offset = 0, channel = '', sort = '' } = {}) {
+  /** GET /api/v1/search?q=&limit=&offset=&channels=&sort= */
+  async search(q, { limit = 20, offset = 0, channels = null, sort = '' } = {}) {
     let url = `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`;
-    if (channel) url += `&channel=${encodeURIComponent(channel)}`;
-    if (sort)    url += `&sort=${encodeURIComponent(sort)}`;
+    const ch = channels ?? Settings.enabledChannels();
+    if (ch.length > 0) url += `&channels=${encodeURIComponent(ch.join(','))}`;
+    if (sort) url += `&sort=${encodeURIComponent(sort)}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`Search failed: ${r.status}`);
     return r.json();   // { packages: [...], total: N, limit, offset }
@@ -62,6 +63,13 @@ const API = {
     const r = await fetch(url);
     if (!r.ok) return null;
     return r.json();   // { keywords: [{name, count}, ...] }
+  },
+
+  /** GET /api/v1/channels */
+  async channels() {
+    const r = await fetch('/api/v1/channels');
+    if (!r.ok) return { channels: [] };
+    return r.json();   // { channels: ["stable", ...] }
   },
 };
 
@@ -237,6 +245,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   setupNavAuth();
+
+  // Settings gear icon
+  const gear = document.getElementById('nav-settings');
+  if (gear) gear.addEventListener('click', openSettingsModal);
 });
 
 // ── Keyword cloud ──────────────────────────────────────────────────────────
@@ -275,6 +287,97 @@ const Auth = {
     return s ? `Bearer ${s.token}` : null;
   },
 };
+
+// ── Settings ───────────────────────────────────────────────────────────────
+
+const Settings = {
+  _key: 'freight_settings',
+
+  get() {
+    try { return JSON.parse(localStorage.getItem(this._key) || '{}'); }
+    catch { return {}; }
+  },
+
+  set(obj) { localStorage.setItem(this._key, JSON.stringify(obj)); },
+
+  /** Returns the list of enabled channels. 'stable' is always included. */
+  enabledChannels() {
+    const s = this.get();
+    const chs = Array.isArray(s.channels) ? s.channels : ['stable'];
+    if (!chs.includes('stable')) chs.unshift('stable');
+    return chs;
+  },
+
+  setChannels(list) {
+    const s = this.get();
+    const unique = [...new Set(['stable', ...list])];
+    this.set({ ...s, channels: unique });
+  },
+};
+
+/**
+ * Open the settings modal.  Fetches the channel list from the server,
+ * renders toggles (stable is always locked on), and wires save/close.
+ */
+async function openSettingsModal() {
+  // Remove any existing modal
+  document.getElementById('settings-modal')?.remove();
+
+  const enabled = Settings.enabledChannels();
+  let allChannels = ['stable'];
+  try {
+    const data = await API.channels();
+    allChannels = data.channels ?? ['stable'];
+    if (!allChannels.includes('stable')) allChannels.unshift('stable');
+  } catch (_) {}
+
+  const channelRows = allChannels.map(ch => {
+    const isStable  = ch === 'stable';
+    const isEnabled = enabled.includes(ch);
+    return `
+      <label class="settings-channel-row${isStable ? ' settings-channel-locked' : ''}">
+        <span class="settings-channel-name">${esc(ch)}</span>
+        <span class="settings-channel-hint">${isStable ? 'always on' : ''}</span>
+        <input type="checkbox" class="settings-channel-cb" data-channel="${esc(ch)}"
+               ${isEnabled ? 'checked' : ''} ${isStable ? 'disabled' : ''}>
+      </label>`;
+  }).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'settings-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="settings-close" aria-label="Close">✕</button>
+      </div>
+      <section>
+        <h3 class="modal-section-title">Channels</h3>
+        <p class="modal-section-hint">Search results include packages from every enabled channel.
+           <em>stable</em> is always on.</p>
+        <div class="settings-channels">${channelRows}</div>
+      </section>
+      <div class="modal-footer">
+        <button class="btn-primary" id="settings-save">Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // Close handlers
+  const close = () => modal.remove();
+  modal.addEventListener('click', e => { if (e.target === modal) close(); });
+  document.getElementById('settings-close').addEventListener('click', close);
+
+  document.getElementById('settings-save').addEventListener('click', () => {
+    const checked = [...modal.querySelectorAll('.settings-channel-cb:checked')]
+      .map(cb => cb.dataset.channel);
+    Settings.setChannels(checked);
+    close();
+    // Re-trigger search on index page if present
+    if (typeof performSearch === 'function') performSearch(currentQuery ?? '', 0);
+  });
+}
 
 /**
  * Update the `#nav-auth` element based on stored session.

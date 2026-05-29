@@ -719,30 +719,41 @@ impl Db {
     pub async fn search_packages(
         &self,
         query: &str,
-        channel: &str,
+        channels: &[&str],
         limit: i64,
         offset: i64,
         sort: &str,
     ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
+        if channels.is_empty() {
+            return Ok((vec![], 0));
+        }
         let pattern = format!("%{query}%");
 
-        let total: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM packages
-             WHERE (lower(name) LIKE lower(?) OR lower(keywords) LIKE lower(?)) AND channel = ?
-               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"))
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(channel)
-        .fetch_one(&self.pool)
-        .await?;
+        let ch_placeholders = channels.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let ch_filter = if channels.len() == 1 {
+            format!("channel = ?")
+        } else {
+            format!("channel IN ({ch_placeholders})")
+        };
 
-        // Join against the version pinned by latest_version (set via cmp_version on publish/import).
-        // Falls back to most-recently-inserted version for packages not yet updated.
+        let count_sql = self.q_sql(&format!(
+            "SELECT COUNT(*) FROM packages
+             WHERE (lower(name) LIKE lower(?) OR lower(keywords) LIKE lower(?))
+               AND {ch_filter}
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"
+        ));
+        let mut count_q = sqlx::query_scalar(&count_sql)
+            .bind(&pattern)
+            .bind(&pattern);
+        for ch in channels { count_q = count_q.bind(ch.to_string()); }
+        let total: i64 = count_q.fetch_one(&self.pool).await?;
+
         let order = match sort {
             "downloads" => "v.downloads DESC, p.name",
             "newest"    => "p.id DESC",
             _           => "p.name",
         };
-        let sql = format!(
+        let sql = self.q_sql(&format!(
             "SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords, p.latest_version,
                     v.version      AS v_version,     v.checksum     AS v_checksum,
                     v.yanked       AS v_yanked,       v.downloads    AS v_downloads,
@@ -754,18 +765,20 @@ impl Db {
                      (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
                       ORDER BY created_at DESC LIMIT 1))
                AND v.yanked = 0
-             WHERE (lower(p.name) LIKE lower(?) OR lower(p.keywords) LIKE lower(?)) AND p.channel = ?
+             WHERE (lower(p.name) LIKE lower(?) OR lower(p.keywords) LIKE lower(?))
+               AND {ch_filter}
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
              ORDER BY {order} LIMIT ? OFFSET ?"
-        );
-        let rows = sqlx::query(&self.q_sql(&sql))
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(channel)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+        ));
+        let mut rows_q = sqlx::query(&sql)
+            .bind(&pattern)
+            .bind(&pattern);
+        for ch in channels { rows_q = rows_q.bind(ch.to_string()); }
+        let rows = rows_q
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -881,6 +894,15 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    /// Return all distinct channel names present in the packages table, sorted.
+    pub async fn list_channels(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query(&self.q_sql(
+            "SELECT DISTINCT channel FROM packages ORDER BY channel"))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.iter().map(|r| r.try_get::<String, _>("channel").unwrap_or_default()).collect())
     }
 
     /// Return the top `limit` keywords by package count for the given channel.

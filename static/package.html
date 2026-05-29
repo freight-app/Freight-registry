@@ -127,7 +127,6 @@ async function loadPackage(name, channel, selectedVersion) {
             ${isActive ? ' <span style="font-size:11px;color:var(--muted)">(viewing)</span>' : ''}</td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${esc((v.checksum ?? '').slice(0,12))}…</td>
         <td>${v.build_system ? `<span class="badge">${esc(v.build_system)}</span>` : '—'}</td>
-        <td class="supports-cell">${v.supports ? renderSupports(v.supports) : '<span style="color:var(--muted);font-size:12px">—</span>'}</td>
         <td style="color:var(--green)">${fmtNum(v.downloads)}</td>
         <td>
           <a href="/api/v1/packages/${esc(name)}/${esc(v.version)}/download"
@@ -207,7 +206,6 @@ async function loadPackage(name, channel, selectedVersion) {
                   <th>Version</th>
                   <th>Checksum</th>
                   <th>Build</th>
-                  <th>Platform support</th>
                   <th>Downloads</th>
                   <th>Download</th>
                 </tr>
@@ -252,15 +250,11 @@ async function loadPackage(name, channel, selectedVersion) {
               ${latest.upstream_url ? `<li><span class="label">Archive</span>
                 <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">tarball ↗</a>
               </li>` : ''}
+              ${latest.supports ? `<li><span class="label">Supports</span>
+                <code style="font-size:12px;color:var(--muted)">${esc(latest.supports)}</code>
+              </li>` : ''}
             </ul>
           </div>
-
-          <!-- Platform support -->
-          ${latest.supports ? `
-          <div class="sidebar-box">
-            <h3>Platform support</h3>
-            <div class="supports-grid">${renderSupports(latest.supports)}</div>
-          </div>` : ''}
 
           <!-- Dependencies -->
           <div class="sidebar-box">

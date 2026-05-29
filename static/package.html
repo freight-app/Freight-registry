@@ -117,7 +117,8 @@ async function loadPackage(name, channel, selectedVersion) {
     ).join(' ');
 
     // ── Build versions table ───────────────────────────────────────────────
-    const versionsHtml = (pkg.versions ?? []).map(v => {
+    const sortedVersions = (pkg.versions ?? []).slice().sort((a, b) => cmpVersion(b.version, a.version));
+    const versionsHtml = sortedVersions.map(v => {
       const isActive = v.version === latest.version;
       const vUrl = `/packages/${esc(name)}?version=${esc(v.version)}${channel && channel !== 'stable' ? `&channel=${esc(channel)}` : ''}`;
       return `
@@ -317,6 +318,17 @@ const PLATFORM_LABELS = {
   native:   'native',
   xbox:     'Xbox',
 };
+
+function cmpVersion(a, b) {
+  const pa = a.split(/[.\-]/).map(x => parseInt(x, 10) || 0);
+  const pb = b.split(/[.\-]/).map(x => parseInt(x, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 
 function renderSupports(expr) {
   if (!expr) return '';

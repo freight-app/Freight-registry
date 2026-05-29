@@ -223,19 +223,9 @@ async function loadPackage(name, channel, selectedVersion) {
         <!-- ── Right sidebar ── -->
         <div>
 
-          <!-- Install -->
+          <!-- Info (formerly Metadata) -->
           <div class="sidebar-box">
-            <h3>Install</h3>
-            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Add to <code>freight.toml</code>:</p>
-            <div class="install-box" style="margin:0">
-              <code id="install-code" style="font-size:12px">${installLine}</code>
-              <button class="copy-btn" data-copy="${installLine}">Copy</button>
-            </div>
-          </div>
-
-          <!-- Metadata -->
-          <div class="sidebar-box">
-            <h3>Metadata</h3>
+            <h3>Info</h3>
             <ul>
               <li>
                 <span class="label">Latest</span>
@@ -256,16 +246,6 @@ async function loadPackage(name, channel, selectedVersion) {
             </ul>
           </div>
 
-          <!-- Platform support -->
-          ${(() => {
-            const sup = latest.supports || pkg.versions?.find(v => v.supports)?.supports;
-            return sup ? `
-          <div class="sidebar-box">
-            <h3>Platform support</h3>
-            <code class="supports-expr">${esc(sup)}</code>
-          </div>` : '';
-          })()}
-
           <!-- Owners -->
           ${ownerList.length ? `
           <div class="sidebar-box">
@@ -278,6 +258,26 @@ async function loadPackage(name, channel, selectedVersion) {
               </div>`).join('')}
             </div>
           </div>` : ''}
+
+          <!-- Platform support -->
+          ${(() => {
+            const sup = latest.supports || pkg.versions?.find(v => v.supports)?.supports;
+            return sup ? `
+          <div class="sidebar-box">
+            <h3>Platform support</h3>
+            <code class="supports-expr">${esc(sup)}</code>
+          </div>` : '';
+          })()}
+
+          <!-- Install -->
+          <div class="sidebar-box">
+            <h3>Install</h3>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Add to <code>freight.toml</code>:</p>
+            <div class="install-box" style="margin:0">
+              <code id="install-code" style="font-size:12px">${installLine}</code>
+              <button class="copy-btn" data-copy="${installLine}">Copy</button>
+            </div>
+          </div>
 
           <!-- Dependencies -->
           <div class="sidebar-box">

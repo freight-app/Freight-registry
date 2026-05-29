@@ -251,8 +251,8 @@ async function loadPackage(name, channel, selectedVersion) {
               ${latest.upstream_url ? `<li><span class="label">Archive</span>
                 <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">tarball ↗</a>
               </li>` : ''}
-              ${latest.supports ? `<li><span class="label">Supports</span>
-                <code style="font-size:12px;color:var(--muted)">${esc(latest.supports)}</code>
+              ${(latest.supports || pkg.versions?.find(v => v.supports)?.supports) ? `<li><span class="label">Supports</span>
+                <code style="font-size:12px;color:var(--muted)">${esc(latest.supports || pkg.versions.find(v => v.supports).supports)}</code>
               </li>` : ''}
             </ul>
           </div>

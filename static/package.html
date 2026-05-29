@@ -92,10 +92,10 @@ async function loadPackage(name, channel, selectedVersion) {
       return;
     }
 
-    // Pick displayed version: URL ?version= param → latest
-    const activeVer = selectedVersion
-      ? (pkg.versions ?? []).find(v => v.version === selectedVersion) ?? pkg.versions?.[0] ?? {}
-      : pkg.versions?.[0] ?? {};
+    // Pick displayed version: URL ?version= param → server-authoritative latest
+    const activeVer = (pkg.versions ?? []).find(v =>
+      v.version === (selectedVersion ?? pkg.latest)
+    ) ?? pkg.versions?.[0] ?? {};
     const latest    = activeVer;   // "latest" alias kept for template compat
     const deps      = (latest.dependencies && Object.keys(latest.dependencies).length > 0)
       ? latest.dependencies

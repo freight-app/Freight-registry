@@ -660,12 +660,14 @@ impl Db {
 
         let Some(pkg) = pkg else { return Ok(None) };
 
-        let versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
+        let mut versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
                     upstream_url, build_system, supports FROM versions
-             WHERE package_id = ? ORDER BY created_at DESC"))
+             WHERE package_id = ?"))
         .bind(pkg.id)
         .fetch_all(&self.pool)
         .await?;
+
+        versions.sort_by(|a, b| cmp_version(&b.version, &a.version));
 
         Ok(Some((pkg, versions)))
     }

@@ -10,7 +10,7 @@ use axum::{
 };
 use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use crate::AppState;
 
@@ -20,6 +20,7 @@ pub mod delete;
 pub mod download;
 pub mod email;
 pub mod health;
+pub mod keywords;
 pub mod login;
 pub mod metrics_handler;
 pub mod my_tokens;
@@ -69,20 +70,25 @@ impl From<anyhow::Error> for ApiError {
 
 /// Resolve a path to the `static/` directory.
 ///
-/// At runtime, looks for `static/` relative to:
+/// At runtime, looks for `static/` in order:
 /// 1. `FREIGHT_STATIC_DIR` env var
-/// 2. The directory of the running binary
-/// 3. The current working directory (dev fallback)
+/// 2. Next to the running binary (production install)
+/// 3. `crates/freight-registry/static/` relative to CWD (Cargo workspace dev layout)
+/// 4. `static/` relative to CWD
 fn static_dir() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("FREIGHT_STATIC_DIR") {
         return std::path::PathBuf::from(p);
     }
-    // Try next to the binary
     if let Ok(exe) = std::env::current_exe() {
         let candidate = exe.parent().unwrap_or(std::path::Path::new(".")).join("static");
         if candidate.is_dir() {
             return candidate;
         }
+    }
+    // Cargo workspace: binary lives in target/debug/ two levels below the workspace root
+    let dev_candidate = std::path::PathBuf::from("crates/freight-registry/static");
+    if dev_candidate.is_dir() {
+        return dev_candidate;
     }
     std::path::PathBuf::from("static")
 }
@@ -103,6 +109,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/health",                                   get(health::health))
         .route("/metrics",                                  get(metrics_handler::metrics))
         .route("/api/v1/stats",                             get(stats::stats))
+        .route("/api/v1/keywords",                          get(keywords::keywords))
         // Public read
         .route("/api/v1/packages/:name",                             get(packages::get_package))
         .route("/api/v1/packages/:name/readme",                      get(readme::get_readme).put(readme::put_readme))
@@ -151,13 +158,24 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // /packages/:name  → package.html  (JS reads the name from the URL)
         // /                → index.html    (search + hero)
         // /style.css, /app.js, etc. → served by ServeDir fallback
+        .route("/",                get(|()| serve_page("index.html")))
         .route("/packages/:_name", get(|()| serve_page("package.html")))
         .route("/login",           get(|()| serve_page("login.html")))
         .route("/register",        get(|()| serve_page("register.html")))
         .route("/account",         get(|()| serve_page("account.html")))
         .fallback_service({
             let dir = static_dir();
-            ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")))
+            ServeDir::new(&dir).fallback(tower::service_fn(|_req: axum::http::Request<axum::body::Body>| async {
+                let path = static_dir().join("404.html");
+                let body = tokio::fs::read(&path).await.unwrap_or_else(|_| b"404 Not Found".to_vec());
+                Ok::<_, std::convert::Infallible>(
+                    axum::response::Response::builder()
+                        .status(axum::http::StatusCode::NOT_FOUND)
+                        .header("content-type", "text/html; charset=utf-8")
+                        .body(axum::body::Body::from(body))
+                        .unwrap()
+                )
+            }))
         })
         // Middleware (applied inside out: security headers → CORS → body limit)
         .layer(middleware::from_fn(security_headers))

@@ -84,6 +84,37 @@ nav {
 .nav-links a { color: var(--muted); }
 .nav-links a:hover { color: var(--text); text-decoration: none; }
 
+.nav-hamburger {
+  display: none;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius);
+}
+.nav-hamburger:hover { color: var(--text); }
+
+@media (max-width: 600px) {
+  .nav-links { display: none; flex-direction: column; gap: 12px; font-size: 15px; }
+  .nav-links.open {
+    display: flex;
+    position: absolute;
+    top: 56px;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 16px 24px;
+    min-width: 160px;
+    z-index: 20;
+  }
+  .nav-hamburger { display: flex; }
+  nav { position: relative; }
+  .nav-search { max-width: 180px; }
+}
+
 /* ── Layout ───────────────────────────────────────────────────────────────── */
 
 main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 100%; }
@@ -543,6 +574,36 @@ footer a:hover { color: var(--text); }
 
 .account-section h2 { font-size: 1.1rem; margin: 0 0 16px; }
 
+/* ── Platform support badges ─────────────────────────────────────────────── */
+
+.supports-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.support-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  border: 1px solid;
+  font-weight: 500;
+}
+
+.support-yes {
+  color: var(--green);
+  border-color: #1a3b25;
+  background: #0d2a16;
+}
+
+.support-no {
+  color: #f85149;
+  border-color: #3d1212;
+  background: #1c0a0a;
+}
+
 /* ── Prebuilts ────────────────────────────────────────────────────────────── */
 
 .prebuilt-list { display: flex; flex-direction: column; gap: 8px; }
@@ -573,6 +634,59 @@ tr.version-active td { background: var(--accent-dim); }
   background: var(--code-bg);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
+
+/* ── Keyword cloud ────────────────────────────────────────────────────────── */
+
+.kw-cloud {
+  margin-bottom: 28px;
+}
+
+.kw-cloud h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.kw-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kw-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.kw-tag:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); text-decoration: none; }
+.kw-tag .kw-count { font-size: 11px; color: var(--muted); background: var(--bg); border-radius: 10px; padding: 1px 6px; }
+
+/* ── Sort select ──────────────────────────────────────────────────────────── */
+
+.sort-select {
+  margin-left: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color .15s;
+}
+.sort-select:hover, .sort-select:focus { border-color: var(--accent); color: var(--text); }
 
 /* ── Pagination ───────────────────────────────────────────────────────────── */
 

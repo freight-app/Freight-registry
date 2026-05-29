@@ -20,6 +20,9 @@ pub struct SearchParams {
     offset: i64,
     #[serde(default)]
     channel: Option<String>,
+    /// Sort order: "name" (default), "downloads", "newest"
+    #[serde(default)]
+    sort: Option<String>,
 }
 
 fn default_limit() -> i64 { 20 }
@@ -37,8 +40,9 @@ pub async fn search_packages(
     let limit   = params.limit.clamp(1, 100);
     let offset  = params.offset.max(0);
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+    let sort    = params.sort.as_deref().unwrap_or("name");
 
-    let (results, total) = state.db.search_packages(query, channel, limit, offset).await?;
+    let (results, total) = state.db.search_packages(query, channel, limit, offset, sort).await?;
 
     let mut local_names = std::collections::HashSet::new();
     let mut packages: Vec<Value> = results

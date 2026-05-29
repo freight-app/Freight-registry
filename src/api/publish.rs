@@ -36,6 +36,9 @@ struct PublishMeta {
     /// Foreign build system required to compile this package ("cmake", "make", "meson", …).
     #[serde(default)]
     build_system: Option<String>,
+    /// Platform support expression (e.g. "!uwp & !arm"). Uses freight boolean syntax.
+    #[serde(default)]
+    supports: Option<String>,
 }
 
 pub async fn publish(
@@ -148,6 +151,7 @@ pub async fn publish(
             &dependencies,
             meta.upstream_url.as_deref(),
             meta.build_system.as_deref(),
+            meta.supports.as_deref(),
         )
         .await?;
 

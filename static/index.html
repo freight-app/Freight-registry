@@ -26,6 +26,11 @@
     <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
     <a id="nav-auth" href="/login">Login</a>
   </div>
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
 </nav>
 
 <!-- Hero (hidden when a search query is active) -->
@@ -42,6 +47,8 @@
 <div id="stats-bar" class="stats-bar"></div>
 
 <main>
+  <!-- Keyword cloud (shown in no-query state) -->
+  <div id="kw-cloud"></div>
   <!-- Filter bar (shown always) -->
   <div id="filter-bar" class="filter-bar" style="display:none">
     <span class="filter-label">Channel:</span>
@@ -50,6 +57,11 @@
       <button class="filter-btn" data-channel="experimental">experimental</button>
       <button class="filter-btn" data-channel="">all</button>
     </div>
+    <select class="sort-select" id="sort-select" title="Sort order">
+      <option value="name">A–Z</option>
+      <option value="downloads">Most downloaded</option>
+      <option value="newest">Newest</option>
+    </select>
   </div>
   <!-- Results area -->
   <div id="results"></div>
@@ -72,6 +84,7 @@ const PAGE_SIZE = 20;
 let currentPage    = 0;
 let currentQuery   = '';
 let currentChannel = 'stable';
+let currentSort    = 'name';
 let totalResults   = 0;
 
 // ── Initialise ──────────────────────────────────────────────────────────────
@@ -91,6 +104,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       performSearch(currentQuery, 0);
     });
   });
+
+  // Sort select wiring
+  const sortSel = document.getElementById('sort-select');
+  if (sortSel) {
+    sortSel.addEventListener('change', () => {
+      currentSort = sortSel.value;
+      performSearch(currentQuery, 0);
+    });
+  }
 
   // Parse ?q= from URL
   const params = new URLSearchParams(location.search);
@@ -132,8 +154,10 @@ async function performSearch(q, offset) {
   const el = document.getElementById('results');
   setLoading(el);
   document.getElementById('pagination').innerHTML = '';
+  // Hide keyword cloud while searching
+  document.getElementById('kw-cloud').innerHTML = '';
   try {
-    const opts = { limit: PAGE_SIZE, offset };
+    const opts = { limit: PAGE_SIZE, offset, sort: currentSort };
     if (currentChannel) opts.channel = currentChannel;
     const data = await API.search(q, opts);
     totalResults = data.total ?? data.packages.length;
@@ -160,12 +184,17 @@ function renderPagination() {
 // ── Featured packages (empty query → browse all) ───────────────────────────
 
 async function loadFeatured() {
-  const el = document.getElementById('results');
+  const el    = document.getElementById('results');
+  const kwEl  = document.getElementById('kw-cloud');
   setLoading(el);
   try {
-    const opts = { limit: PAGE_SIZE, channel: currentChannel || undefined };
-    const data = await API.search('', opts);
+    const opts = { limit: PAGE_SIZE, channel: currentChannel || undefined, sort: currentSort };
+    const [data, kwData] = await Promise.all([
+      API.search('', opts),
+      API.keywords({ channel: currentChannel || undefined }),
+    ]);
     totalResults = data.total ?? 0;
+    renderKeywordCloud(kwData?.keywords ?? [], kwEl);
     if (data.packages.length === 0) {
       el.innerHTML = `<div class="empty" style="padding-top:16px">
         No packages published yet. Be the first to

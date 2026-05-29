@@ -525,6 +525,8 @@ struct StubPackage {
     license:     Option<String>,
     url:         Option<String>,
     build:       Option<String>,
+    #[serde(default)]
+    supports:    Option<String>,
     #[allow(dead_code)]
     keywords:    Option<Vec<String>>,
 }
@@ -675,7 +677,8 @@ async fn cmd_import(
                 .bind("")                              // checksum — empty for metadata-only
                 .bind(stub.deps_json.as_str())
                 .bind(stub.pkg.url.as_deref())
-                .bind(stub.pkg.build.as_deref());
+                .bind(stub.pkg.build.as_deref())
+                .bind(stub.pkg.supports.as_deref());
         }
         let vr = vq.execute(&pool).await?;
         ver_inserted += vr.rows_affected() as i64;
@@ -692,6 +695,12 @@ async fn cmd_import(
 
     println!("Versions inserted: {ver_inserted}");
     println!("Owners assigned:   {own_inserted}");
+
+    // ── Phase 4: set latest_version using semantic version ordering ─────────
+    println!("Phase 4/4 — computing latest_version per package …");
+    let updated = db.update_all_latest_versions().await?;
+    println!("latest_version set for {updated} packages.");
+
     println!("Import complete.");
     Ok(())
 }
@@ -746,18 +755,23 @@ fn batch_id_select_sql(n: usize, pg: bool) -> String {
 fn batch_version_insert_sql(n: usize, pg: bool) -> String {
     let mut s = String::from(
         "INSERT INTO versions \
-         (package_id, version, checksum, dependencies, upstream_url, build_system) VALUES "
+         (package_id, version, checksum, dependencies, upstream_url, build_system, supports) VALUES "
     );
     for i in 0..n {
         if i > 0 { s.push(','); }
         if pg {
-            let b = i * 6;
-            s.push_str(&format!("(${},${},${},${},${},${}) ", b+1, b+2, b+3, b+4, b+5, b+6));
+            let b = i * 7;
+            s.push_str(&format!("(${},${},${},${},${},${},${}) ", b+1, b+2, b+3, b+4, b+5, b+6, b+7));
         } else {
-            s.push_str("(?,?,?,?,?,?)");
+            s.push_str("(?,?,?,?,?,?,?)");
         }
     }
-    s.push_str(" ON CONFLICT DO NOTHING");
+    // On conflict: update supports (allows re-importing to populate this field for existing rows).
+    if pg {
+        s.push_str(" ON CONFLICT (package_id, version) DO UPDATE SET supports = excluded.supports");
+    } else {
+        s.push_str(" ON CONFLICT (package_id, version) DO UPDATE SET supports = excluded.supports");
+    }
     s
 }
 

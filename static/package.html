@@ -26,6 +26,11 @@
     <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
     <a id="nav-auth" href="/login">Login</a>
   </div>
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
 </nav>
 
 <main id="main">
@@ -243,6 +248,13 @@ async function loadPackage(name, channel, selectedVersion) {
             </ul>
           </div>
 
+          <!-- Platform support -->
+          ${latest.supports ? `
+          <div class="sidebar-box">
+            <h3>Platform support</h3>
+            <div class="supports-grid">${renderSupports(latest.supports)}</div>
+          </div>` : ''}
+
           <!-- Dependencies -->
           <div class="sidebar-box">
             <h3>Dependencies
@@ -275,6 +287,53 @@ async function loadPackage(name, channel, selectedVersion) {
   } catch (err) {
     main.innerHTML = `<div class="error">Failed to load package: ${esc(err.message)}</div>`;
   }
+}
+
+// ── Platform support renderer ─────────────────────────────────────────────────
+// Parses a freight/vcpkg boolean expression (e.g. "!uwp & !arm | linux")
+// and renders each term as a green ✓ or red ✗ badge.
+
+const PLATFORM_LABELS = {
+  linux:    'Linux',
+  windows:  'Windows',
+  osx:      'macOS',
+  macos:    'macOS',
+  android:  'Android',
+  ios:      'iOS',
+  uwp:      'UWP',
+  wasm32:   'WASM',
+  wasm64:   'WASM64',
+  x64:      'x64',
+  x86:      'x86',
+  arm:      'ARM',
+  arm64:    'ARM64',
+  arm32:    'ARM32',
+  arm64ec:  'ARM64EC',
+  emscripten: 'Emscripten',
+  mingw:    'MinGW',
+  static:   'static',
+  staticcrt: 'static CRT',
+  native:   'native',
+  xbox:     'Xbox',
+};
+
+function renderSupports(expr) {
+  if (!expr) return '';
+  // Tokenise: split on & and | (keep !, identifiers and parens together per term)
+  // Simple approach: split on & | , and trim each term.
+  const terms = expr
+    .split(/[&|,]+/)
+    .map(t => t.trim().replace(/[()]/g, '').trim())
+    .filter(Boolean);
+
+  return terms.map(term => {
+    const negated = term.startsWith('!');
+    const id = term.replace(/^!/, '').trim().toLowerCase();
+    const label = PLATFORM_LABELS[id] ?? id;
+    return negated
+      ? `<span class="support-badge support-no" title="Not supported: ${esc(label)}">✗ ${esc(label)}</span>`
+      : `<span class="support-badge support-yes" title="Supported: ${esc(label)}">✓ ${esc(label)}</span>`;
+  }).join('');
 }
 
 // ── Markdown renderer (no external deps) ─────────────────────────────────────

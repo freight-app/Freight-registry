@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -83,15 +84,40 @@ pub struct TokenWithUser {
     pub username:   String,
 }
 
+/// Compare two version strings heuristically: split on `.`, `-`, `_`;
+/// compare segments numerically where possible, lexicographically otherwise.
+pub fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
+    let ta: Vec<&str> = a.split(['.', '-', '_']).collect();
+    let tb: Vec<&str> = b.split(['.', '-', '_']).collect();
+    for (sa, sb) in ta.iter().zip(tb.iter()) {
+        let ord = match (sa.parse::<u64>(), sb.parse::<u64>()) {
+            (Ok(na), Ok(nb)) => na.cmp(&nb),
+            _ => sa.cmp(sb),
+        };
+        if ord != std::cmp::Ordering::Equal { return ord; }
+    }
+    ta.len().cmp(&tb.len())
+}
+
+/// Pick the highest non-yanked version from a slice. Falls back to first if all yanked.
+pub fn best_version<'a>(versions: &'a [VersionRow]) -> Option<&'a str> {
+    versions.iter()
+        .filter(|v| v.yanked == 0)
+        .max_by(|a, b| cmp_version(&a.version, &b.version))
+        .or_else(|| versions.first())
+        .map(|v| v.version.as_str())
+}
+
 #[derive(FromRow)]
 pub struct PackageRow {
-    pub id:          i64,
-    pub name:        String,
-    pub channel:     String,
-    pub description: Option<String>,
-    pub license:     Option<String>,
+    pub id:             i64,
+    pub name:           String,
+    pub channel:        String,
+    pub description:    Option<String>,
+    pub license:        Option<String>,
     /// Comma-separated keyword list, e.g. `"math,linear-algebra"`. NULL = no keywords.
-    pub keywords:    Option<String>,
+    pub keywords:       Option<String>,
+    pub latest_version: Option<String>,
 }
 
 pub const DEFAULT_CHANNEL: &str = "stable";
@@ -102,9 +128,10 @@ pub struct VersionRow {
     pub checksum:     String,
     pub yanked:       i64,
     pub downloads:    i64,
-    pub dependencies: String,        // JSON object: {"name": "version", ...}
+    pub dependencies: String,         // JSON object: {"name": "version", ...}
     pub upstream_url: Option<String>, // upstream source archive URL (metadata-only packages)
     pub build_system: Option<String>, // e.g. "cmake", "make", "meson"
+    pub supports:     Option<String>, // platform filter expression, e.g. "!uwp & !arm"
 }
 
 #[derive(FromRow)]
@@ -624,7 +651,7 @@ impl Db {
 
 
     pub async fn get_package(&self, name: &str, channel: &str) -> Result<Option<(PackageRow, Vec<VersionRow>)>> {
-        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages \
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords, latest_version FROM packages \
              WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(name)
         .bind(channel)
@@ -634,7 +661,7 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system FROM versions
+                    upstream_url, build_system, supports FROM versions
              WHERE package_id = ? ORDER BY created_at DESC"))
         .bind(pkg.id)
         .fetch_all(&self.pool)
@@ -646,7 +673,7 @@ impl Db {
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system FROM versions
+                    upstream_url, build_system, supports FROM versions
              WHERE version = ?
                AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"))
         .bind(version)
@@ -695,6 +722,7 @@ impl Db {
         channel: &str,
         limit: i64,
         offset: i64,
+        sort: &str,
     ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
         let pattern = format!("%{query}%");
 
@@ -706,26 +734,30 @@ impl Db {
         .fetch_one(&self.pool)
         .await?;
 
-        // Single query: fetch packages + their latest non-yanked version via a window function.
-        // ROW_NUMBER() OVER (PARTITION BY package_id ORDER BY created_at DESC) is supported
-        // by SQLite 3.25+ and all modern Postgres versions.
-        let rows = sqlx::query(&self.q_sql(
-            "WITH latest_v AS (
-                 SELECT package_id,
-                        version, checksum, yanked, downloads, dependencies, upstream_url, build_system,
-                        ROW_NUMBER() OVER (PARTITION BY package_id ORDER BY created_at DESC) AS rn
-                 FROM versions WHERE yanked = 0
-             )
-             SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords,
-                    v.version     AS v_version,     v.checksum      AS v_checksum,
-                    v.yanked      AS v_yanked,       v.downloads     AS v_downloads,
-                    v.dependencies AS v_deps,        v.upstream_url  AS v_upstream_url,
-                    v.build_system AS v_build_system
+        // Join against the version pinned by latest_version (set via cmp_version on publish/import).
+        // Falls back to most-recently-inserted version for packages not yet updated.
+        let order = match sort {
+            "downloads" => "v.downloads DESC, p.name",
+            "newest"    => "p.id DESC",
+            _           => "p.name",
+        };
+        let sql = format!(
+            "SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords, p.latest_version,
+                    v.version      AS v_version,     v.checksum     AS v_checksum,
+                    v.yanked       AS v_yanked,       v.downloads    AS v_downloads,
+                    v.dependencies AS v_deps,         v.upstream_url AS v_upstream_url,
+                    v.build_system AS v_build_system, v.supports     AS v_supports
              FROM packages p
-             LEFT JOIN latest_v v ON v.package_id = p.id AND v.rn = 1
+             LEFT JOIN versions v ON v.package_id = p.id
+               AND v.version = COALESCE(p.latest_version,
+                     (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
+                      ORDER BY created_at DESC LIMIT 1))
+               AND v.yanked = 0
              WHERE lower(p.name) LIKE lower(?) AND p.channel = ?
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
-             ORDER BY p.name LIMIT ? OFFSET ?"))
+             ORDER BY {order} LIMIT ? OFFSET ?"
+        );
+        let rows = sqlx::query(&self.q_sql(&sql))
         .bind(&pattern)
         .bind(channel)
         .bind(limit)
@@ -736,12 +768,13 @@ impl Db {
         let mut results = Vec::with_capacity(rows.len());
         for row in &rows {
             let pkg = PackageRow {
-                id:          row.try_get("id")?,
-                name:        row.try_get("name")?,
-                channel:     row.try_get("channel")?,
-                description: row.try_get("description")?,
-                license:     row.try_get("license")?,
-                keywords:    row.try_get("keywords")?,
+                id:             row.try_get("id")?,
+                name:           row.try_get("name")?,
+                channel:        row.try_get("channel")?,
+                description:    row.try_get("description")?,
+                license:        row.try_get("license")?,
+                keywords:       row.try_get("keywords")?,
+                latest_version: row.try_get("latest_version").unwrap_or_default(),
             };
             let ver = match row.try_get::<String, _>("v_version") {
                 Ok(version) => Some(VersionRow {
@@ -752,6 +785,7 @@ impl Db {
                     dependencies: row.try_get("v_deps").unwrap_or_default(),
                     upstream_url: row.try_get("v_upstream_url").unwrap_or_default(),
                     build_system: row.try_get("v_build_system").unwrap_or_default(),
+                    supports:     row.try_get("v_supports").unwrap_or_default(),
                 }),
                 Err(_) => None,
             };
@@ -765,6 +799,7 @@ impl Db {
     /// `upstream_url` — when set, marks this as a "metadata-only" entry: no tarball is
     /// stored on the server and `/download` returns a 302 redirect to this URL.
     /// `build_system` — the foreign build system needed to compile the package (e.g. "cmake").
+    /// `supports`     — platform filter expression (e.g. "!uwp & !arm").
     pub async fn publish_version(
         &self,
         user_id: i64,
@@ -778,12 +813,13 @@ impl Db {
         dependencies: &str,
         upstream_url: Option<&str>,
         build_system: Option<&str>,
+        supports: Option<&str>,
     ) -> Result<()> {
         sqlx::query(&self.q_sql("INSERT INTO packages (name, channel, description, license, keywords) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(name, channel) DO UPDATE SET
-               description = COALESCE(excluded.description, description),
-               license     = COALESCE(excluded.license, license),
-               keywords    = COALESCE(excluded.keywords, keywords)"))
+               description = COALESCE(excluded.description, packages.description),
+               license     = COALESCE(excluded.license,     packages.license),
+               keywords    = COALESCE(excluded.keywords,    packages.keywords)"))
         .bind(name)
         .bind(channel)
         .bind(description)
@@ -792,22 +828,41 @@ impl Db {
         .execute(&self.pool)
         .await?;
 
-        let pkg: PackageRow = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
+        let pkg: PackageRow = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords, latest_version FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(name)
         .bind(channel)
         .fetch_one(&self.pool)
         .await?;
 
-        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system)
-             VALUES (?, ?, ?, ?, ?, ?)"))
+        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system, supports)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"))
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
         .bind(dependencies)
         .bind(upstream_url)
         .bind(build_system)
+        .bind(supports)
         .execute(&self.pool)
         .await?;
+
+        // Maintain latest_version using semantic ordering.
+        let cur_latest: Option<String> = sqlx::query_scalar(
+            &self.q_sql("SELECT latest_version FROM packages WHERE id = ?"))
+            .bind(pkg.id)
+            .fetch_optional(&self.pool)
+            .await?
+            .flatten();
+        let is_newer = cur_latest.as_deref()
+            .map(|cur| cmp_version(version, cur) == std::cmp::Ordering::Greater)
+            .unwrap_or(true);
+        if is_newer {
+            sqlx::query(&self.q_sql("UPDATE packages SET latest_version = ? WHERE id = ?"))
+                .bind(version)
+                .bind(pkg.id)
+                .execute(&self.pool)
+                .await?;
+        }
 
         // Auto-grant ownership if the package has no owners yet.
         let owner_count: i64 =
@@ -824,6 +879,62 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    /// Return the top `limit` keywords by package count for the given channel.
+    pub async fn keywords_top(&self, channel: &str, limit: i64) -> Result<Vec<(String, i64)>> {
+        let rows = sqlx::query(&self.q_sql(
+            "SELECT keywords FROM packages WHERE channel = ? AND keywords IS NOT NULL AND keywords != ''"))
+            .bind(channel)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut counts: HashMap<String, i64> = HashMap::new();
+        for row in rows {
+            let kws: String = row.try_get("keywords").unwrap_or_default();
+            for kw in kws.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+                *counts.entry(kw.to_lowercase()).or_insert(0) += 1;
+            }
+        }
+
+        let mut sorted: Vec<(String, i64)> = counts.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        sorted.truncate(limit as usize);
+        Ok(sorted)
+    }
+
+    /// Recompute `latest_version` for every package using semantic `cmp_version` ordering.
+    /// Call this after bulk imports to ensure consistent "latest" across the registry.
+    pub async fn update_all_latest_versions(&self) -> Result<u64> {
+        let rows = sqlx::query(
+            &self.q_sql("SELECT package_id, version FROM versions WHERE yanked = 0 ORDER BY package_id"))
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut by_pkg: HashMap<i64, Vec<String>> = HashMap::new();
+        for row in rows {
+            let pkg_id: i64   = row.try_get("package_id")?;
+            let ver:    String = row.try_get("version")?;
+            by_pkg.entry(pkg_id).or_default().push(ver);
+        }
+
+        let mut updated = 0u64;
+        for (pkg_id, versions) in by_pkg {
+            let best = versions.iter()
+                .max_by(|a, b| cmp_version(a, b))
+                .cloned();
+            if let Some(best) = best {
+                let affected = sqlx::query(
+                    &self.q_sql("UPDATE packages SET latest_version = ? WHERE id = ?"))
+                    .bind(&best)
+                    .bind(pkg_id)
+                    .execute(&self.pool)
+                    .await?
+                    .rows_affected();
+                updated += affected;
+            }
+        }
+        Ok(updated)
     }
 
     pub async fn set_yanked(&self, name: &str, version: &str, channel: &str, yanked: bool) -> Result<bool> {
@@ -858,7 +969,7 @@ impl Db {
         package_name: &str,
         channel: &str,
     ) -> Result<Option<bool>> {
-        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords, latest_version FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(package_name)
         .bind(channel)
         .fetch_optional(&self.pool)
@@ -891,7 +1002,7 @@ impl Db {
     }
 
     pub async fn add_package_owner(&self, package_name: &str, channel: &str, username: &str) -> Result<bool> {
-        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
+        let pkg: Option<PackageRow> = sqlx::query_as(&self.q_sql("SELECT id, name, channel, description, license, keywords, latest_version FROM packages WHERE lower(name) = lower(?) AND channel = ?"))
         .bind(package_name)
         .bind(channel)
         .fetch_optional(&self.pool)

@@ -4,13 +4,15 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 ## Open
 
-- [ ] **W10 · S** **Custom 404 page** — unknown routes fall through to a blank page; add a `404.html` static page and return it with a 404 status for unmatched `/packages/…` or bare paths
-- [ ] **W11 · S** **"Browse by keyword" section** — homepage (no-query state) shows a static grid of popular/curated keywords above the package list
-- [ ] **W12 · S** **Sort order on search** — add a sort dropdown (relevance / most-downloaded / newest) once the search API supports `sort=` param
-- [ ] **W13 · S** **Responsive nav** — on narrow screens the nav-search overlaps nav-links; collapse nav-links behind a hamburger button below ~600 px
-- [ ] **W14 · S** **Search version consistency** — search CTE orders by `created_at DESC` (insertion order) while the full package page uses semantic version sort (`cmp_version`); a package's "latest" in search can differ from the detail page
+_(all current items complete — see Done below)_
 
 ## Done
+
+- [x] **W10** Custom 404 page — `static/404.html` served with 404 status; `/` route explicit; unknown paths show freight-themed error page
+- [x] **W11** Browse by keyword — `GET /api/v1/keywords` endpoint; homepage shows keyword cloud; falls back to 25 curated search categories (audio, json, ssl, …) when no keyword metadata exists
+- [x] **W12** Sort order — sort dropdown (A–Z / Most downloaded / Newest) in filter bar; `sort=` param on search API; `search_packages` ORDER BY varies accordingly
+- [x] **W13** Responsive nav — hamburger button (≤600 px); `.nav-links.open` dropdown; closes on outside click; all 5 HTML pages updated
+- [x] **W14** Search version consistency — `latest_version TEXT` column on packages; maintained via `cmp_version` on every publish; import phase 4 back-fills it; search query joins on `p.latest_version` instead of CTE window function
 
 - [x] Package cards — name, description, version badge, keyword badges, download count
 - [x] Package detail page — install box, README, versions table, deps table, metadata sidebar, owners, quick links

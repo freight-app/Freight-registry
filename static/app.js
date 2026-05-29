@@ -7,10 +7,11 @@
 // ── API helpers ────────────────────────────────────────────────────────────
 
 const API = {
-  /** GET /api/v1/search?q=&limit=&offset=&channel= */
-  async search(q, { limit = 20, offset = 0, channel = '' } = {}) {
+  /** GET /api/v1/search?q=&limit=&offset=&channel=&sort= */
+  async search(q, { limit = 20, offset = 0, channel = '', sort = '' } = {}) {
     let url = `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`;
     if (channel) url += `&channel=${encodeURIComponent(channel)}`;
+    if (sort)    url += `&sort=${encodeURIComponent(sort)}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error(`Search failed: ${r.status}`);
     return r.json();   // { packages: [...], total: N, limit, offset }
@@ -52,6 +53,15 @@ const API = {
     const r = await fetch('/api/v1/stats');
     if (!r.ok) return null;
     return r.json();
+  },
+
+  /** GET /api/v1/keywords?channel=&limit= */
+  async keywords({ channel = '', limit = 30 } = {}) {
+    let url = `/api/v1/keywords?limit=${limit}`;
+    if (channel) url += `&channel=${encodeURIComponent(channel)}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return r.json();   // { keywords: [{name, count}, ...] }
   },
 };
 
@@ -211,8 +221,45 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Hamburger menu toggle (mobile)
+  const hamburger = document.getElementById('nav-hamburger');
+  const navLinks  = document.querySelector('.nav-links');
+  if (hamburger && navLinks) {
+    hamburger.addEventListener('click', () => {
+      navLinks.classList.toggle('open');
+    });
+    document.addEventListener('click', e => {
+      if (!hamburger.contains(e.target) && !navLinks.contains(e.target)) {
+        navLinks.classList.remove('open');
+      }
+    });
+  }
+
   setupNavAuth();
 });
+
+// ── Keyword cloud ──────────────────────────────────────────────────────────
+
+// Popular search terms shown when no keyword metadata is present in the registry.
+const BROWSE_CATEGORIES = [
+  'audio','compression','crypto','database','graphics','gui',
+  'http','image','json','math','mqtt','networking','opengl','physics',
+  'protobuf','regex','serialization','sqlite','tls','unicode',
+  'vulkan','websocket','xml','zip','zlib',
+];
+
+/**
+ * Render a keyword cloud into `el`.
+ * `kws` = [{name, count}, ...].  Falls back to BROWSE_CATEGORIES if empty.
+ */
+function renderKeywordCloud(kws, el) {
+  const items = (kws && kws.length > 0) ? kws : BROWSE_CATEGORIES.map(n => ({ name: n, count: null }));
+  const tags = items.map(k =>
+    `<a class="kw-tag" href="/?q=${encodeURIComponent(k.name)}">${esc(k.name)}${k.count != null ? `<span class="kw-count">${fmtNum(k.count)}</span>` : ''}</a>`
+  ).join('');
+  el.innerHTML = `<div class="kw-cloud"><h2>Browse by category</h2><div class="kw-tags">${tags}</div></div>`;
+}
 
 // ── Auth helpers ───────────────────────────────────────────────────────────
 

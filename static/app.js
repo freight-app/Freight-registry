@@ -124,7 +124,7 @@ function renderPackageCards(packages, el) {
           <div class="pkg-name">${esc(pkg.name)}</div>
           <p class="pkg-desc">${esc(pkg.description || '')}</p>
           <div class="pkg-meta">
-            <span class="badge version">v${esc(pkg.latest)}</span>
+            <span class="badge version">${esc(pkg.name)}@${esc(pkg.latest)}</span>
             ${lang ? `<span class="badge lang">${esc(lang)}</span>` : ''}
             ${pkg.channel && pkg.channel !== 'stable'
               ? `<span class="badge channel">${esc(pkg.channel)}</span>` : ''}

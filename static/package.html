@@ -97,7 +97,9 @@ async function loadPackage(name, channel, selectedVersion) {
       ? (pkg.versions ?? []).find(v => v.version === selectedVersion) ?? pkg.versions?.[0] ?? {}
       : pkg.versions?.[0] ?? {};
     const latest    = activeVer;   // "latest" alias kept for template compat
-    const deps      = latest.dependencies ?? {};
+    const deps      = (latest.dependencies && Object.keys(latest.dependencies).length > 0)
+      ? latest.dependencies
+      : (pkg.versions?.find(v => v.dependencies && Object.keys(v.dependencies).length > 0)?.dependencies ?? {});
     const ownerList = (owners.users ?? []).map(u => u.login ?? u);
 
     // README is per-version — fetch after we know which version is active

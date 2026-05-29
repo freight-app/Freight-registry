@@ -241,23 +241,31 @@ async function loadPackage(name, channel, selectedVersion) {
                 <span class="label">Latest</span>
                 <span class="badge version">v${esc(pkg.versions?.[0]?.version ?? pkg.latest)}</span>
               </li>
-              ${pkg.license ? `<li><span class="label">License</span><span>${esc(pkg.license)}</span></li>` : ''}
+              ${pkg.license ? `<li><span class="label">License</span><span class="meta-value">${esc(pkg.license)}</span></li>` : ''}
               ${totalDownloads ? `<li><span class="label">Downloads</span><span style="color:var(--green)">${fmtNum(totalDownloads)}</span></li>` : ''}
               ${(() => {
                 const repo = repoUrl(latest.upstream_url);
                 return repo
                   ? `<li><span class="label">Repository</span>
-                     <a href="${esc(repo)}" target="_blank" style="font-size:12px">${esc(repoLabel(repo))} ↗</a></li>`
+                     <a href="${esc(repo)}" target="_blank" class="meta-value meta-link">${esc(repoLabel(repo))} ↗</a></li>`
                   : '';
               })()}
               ${latest.upstream_url ? `<li><span class="label">Archive</span>
-                <a href="${esc(latest.upstream_url)}" target="_blank" style="font-size:12px">tarball ↗</a>
+                <a href="${esc(latest.upstream_url)}" target="_blank" class="meta-value meta-link">tarball ↗</a>
               </li>` : ''}
-              ${(latest.supports || pkg.versions?.find(v => v.supports)?.supports) ? `<li><span class="label">Supports</span>
-                <code style="font-size:12px;color:var(--muted)">${esc(latest.supports || pkg.versions.find(v => v.supports).supports)}</code>
-              </li>` : ''}
+              ${ownerList.length ? `<li><span class="label">Owners</span><span class="meta-value">${ownerList.map(o => esc(o)).join(', ')}</span></li>` : ''}
             </ul>
           </div>
+
+          <!-- Platform support -->
+          ${(() => {
+            const sup = latest.supports || pkg.versions?.find(v => v.supports)?.supports;
+            return sup ? `
+          <div class="sidebar-box">
+            <h3>Platform support</h3>
+            <code class="supports-expr">${esc(sup)}</code>
+          </div>` : '';
+          })()}
 
           <!-- Dependencies -->
           <div class="sidebar-box">
@@ -266,15 +274,6 @@ async function loadPackage(name, channel, selectedVersion) {
             </h3>
             ${depsHtml}
           </div>
-
-          <!-- Owners -->
-          ${ownerList.length ? `
-          <div class="sidebar-box">
-            <h3>Owners</h3>
-            <ul>
-              ${ownerList.map(o => `<li><span>${esc(o)}</span></li>`).join('')}
-            </ul>
-          </div>` : ''}
 
           <!-- Quick links -->
           <div class="sidebar-box">

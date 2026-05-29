@@ -241,22 +241,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Keyword cloud ──────────────────────────────────────────────────────────
 
-// Popular search terms shown when no keyword metadata is present in the registry.
-const BROWSE_CATEGORIES = [
-  'audio','compression','crypto','database','graphics','gui',
-  'http','image','json','math','mqtt','networking','opengl','physics',
-  'protobuf','regex','serialization','sqlite','tls','unicode',
-  'vulkan','websocket','xml','zip','zlib',
-];
-
 /**
  * Render a keyword cloud into `el`.
- * `kws` = [{name, count}, ...].  Falls back to BROWSE_CATEGORIES if empty.
+ * `kws` = [{name, count}, ...].  Hides the cloud if empty.
  */
 function renderKeywordCloud(kws, el) {
-  const items = (kws && kws.length > 0) ? kws : BROWSE_CATEGORIES.map(n => ({ name: n, count: null }));
-  const tags = items.map(k =>
-    `<a class="kw-tag" href="/?q=${encodeURIComponent(k.name)}">${esc(k.name)}${k.count != null ? `<span class="kw-count">${fmtNum(k.count)}</span>` : ''}</a>`
+  if (!kws || kws.length === 0) { el.innerHTML = ''; return; }
+  const tags = kws.map(k =>
+    `<a class="kw-tag" href="/?q=${encodeURIComponent(k.name)}">${esc(k.name)}<span class="kw-count">${fmtNum(k.count)}</span></a>`
   ).join('');
   el.innerHTML = `<div class="kw-cloud"><h2>Browse by category</h2><div class="kw-tags">${tags}</div></div>`;
 }

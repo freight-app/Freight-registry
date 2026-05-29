@@ -905,6 +905,39 @@ impl Db {
         Ok(sorted)
     }
 
+    /// For each term in `terms`, count how many packages in `channel` match it
+    /// (by package name or keyword list).  Returns only terms with count > 0,
+    /// sorted descending by count.  Used as a fallback when no keyword metadata exists.
+    pub async fn keywords_count_terms(&self, channel: &str, terms: &[&str]) -> Result<Vec<(String, i64)>> {
+        let rows = sqlx::query(&self.q_sql(
+            "SELECT name, keywords FROM packages WHERE channel = ?
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"))
+            .bind(channel)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut counts: HashMap<&str, i64> = HashMap::new();
+        for row in &rows {
+            let name: String = row.try_get("name").unwrap_or_default();
+            let kws:  String = row.try_get("keywords").unwrap_or_default();
+            let name_lc = name.to_lowercase();
+            let kws_lc  = kws.to_lowercase();
+            for &term in terms {
+                if name_lc.contains(term) || kws_lc.contains(term) {
+                    *counts.entry(term).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut result: Vec<(String, i64)> = counts
+            .into_iter()
+            .filter(|(_, c)| *c > 0)
+            .map(|(t, c)| (t.to_string(), c))
+            .collect();
+        result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(result)
+    }
+
     /// Recompute `latest_version` for every package using semantic `cmp_version` ordering.
     /// Call this after bulk imports to ensure consistent "latest" across the registry.
     pub async fn update_all_latest_versions(&self) -> Result<u64> {

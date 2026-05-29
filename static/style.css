@@ -333,6 +333,34 @@ main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 10
 }
 .meta-link { font-size: 12px; }
 
+/* ── Owners widget ───────────────────────────────────────────────────────── */
+
+.owner-list { display: flex; flex-direction: column; gap: 8px; }
+
+.owner-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.owner-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  /* swap for <img> later: just replace this element with an <img class="owner-avatar"> */
+}
+
+.owner-name { font-size: 13px; }
+
 /* Platform support expression box */
 .supports-expr {
   display: block;

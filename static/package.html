@@ -253,7 +253,6 @@ async function loadPackage(name, channel, selectedVersion) {
               ${latest.upstream_url ? `<li><span class="label">Archive</span>
                 <a href="${esc(latest.upstream_url)}" target="_blank" class="meta-value meta-link">tarball ↗</a>
               </li>` : ''}
-              ${ownerList.length ? `<li><span class="label">Owners</span><span class="meta-value">${ownerList.map(o => esc(o)).join(', ')}</span></li>` : ''}
             </ul>
           </div>
 
@@ -266,6 +265,19 @@ async function loadPackage(name, channel, selectedVersion) {
             <code class="supports-expr">${esc(sup)}</code>
           </div>` : '';
           })()}
+
+          <!-- Owners -->
+          ${ownerList.length ? `
+          <div class="sidebar-box">
+            <h3>Owners</h3>
+            <div class="owner-list">
+              ${ownerList.map(o => `
+              <div class="owner-row">
+                <div class="owner-avatar">${esc(o[0].toUpperCase())}</div>
+                <span class="owner-name">${esc(o)}</span>
+              </div>`).join('')}
+            </div>
+          </div>` : ''}
 
           <!-- Dependencies -->
           <div class="sidebar-box">

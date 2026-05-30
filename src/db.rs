@@ -1224,6 +1224,37 @@ impl Db {
         Ok(())
     }
 
+    // ── Graph ──────────────────────────────────────────────────────────────────
+
+    /// Return every non-yanked package in `channel` alongside its latest
+    /// version's dependency JSON blob — one row per package.
+    pub async fn all_packages_with_deps(&self, channel: &str) -> Result<Vec<(String, String)>> {
+        let sql = self.q_sql(
+            "SELECT p.name, COALESCE(v.dependencies, '{}') AS dependencies
+             FROM packages p
+             LEFT JOIN versions v ON v.package_id = p.id
+               AND v.version = COALESCE(p.latest_version,
+                     (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
+                      ORDER BY created_at DESC LIMIT 1))
+               AND v.yanked = 0
+             WHERE p.channel = ?
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
+             ORDER BY p.name"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(channel)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut result = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let name: String = row.try_get("name")?;
+            let deps: String = row.try_get("dependencies").unwrap_or_else(|_| "{}".to_string());
+            result.push((name, deps));
+        }
+        Ok(result)
+    }
+
     // ── Metrics ────────────────────────────────────────────────────────────────
 
     pub async fn stats(&self) -> Result<DbStats> {

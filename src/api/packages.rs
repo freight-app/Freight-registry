@@ -142,6 +142,30 @@ pub async fn get_package(
     Ok(resp)
 }
 
+/// GET /api/v1/graph?channel=
+///
+/// Returns every package in the registry as a flat list of `{ name, deps }`
+/// objects — one entry per package, `deps` being its direct dependency names
+/// (keys from the latest-version dependencies JSON).  Used by the global
+/// dependency-graph page.
+pub async fn get_graph(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ChannelParam>,
+) -> ApiResult<impl IntoResponse> {
+    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+    let rows = state.db.all_packages_with_deps(channel).await?;
+
+    let graph: Vec<serde_json::Value> = rows.iter().map(|(name, deps_json)| {
+        let dep_names: Vec<String> = match serde_json::from_str::<serde_json::Value>(deps_json) {
+            Ok(serde_json::Value::Object(map)) => map.keys().cloned().collect(),
+            _ => vec![],
+        };
+        serde_json::json!({ "name": name, "deps": dep_names })
+    }).collect();
+
+    Ok(Json(serde_json::json!(graph)))
+}
+
 pub fn download_url(base_url: &str, name: &str, version: &str, channel: &str) -> String {
     if channel == DEFAULT_CHANNEL {
         format!("{base_url}/api/v1/packages/{name}/{version}/download")

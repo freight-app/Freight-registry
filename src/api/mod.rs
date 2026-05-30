@@ -113,6 +113,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/keywords",                          get(keywords::keywords))
         .route("/api/v1/channels",                          get(channels::list_channels))
         // Public read
+        .route("/api/v1/graph",                                      get(packages::get_graph))
         .route("/api/v1/packages/:name",                             get(packages::get_package))
         .route("/api/v1/packages/:name/:version/readme",              get(readme::get_readme).put(readme::put_readme))
         .route("/api/v1/search",                                     get(search::search_packages))
@@ -161,6 +162,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // /                → index.html    (search + hero)
         // /style.css, /app.js, etc. → served by ServeDir fallback
         .route("/",                get(|()| serve_page("index.html")))
+        .route("/graph",           get(|()| serve_page("graph.html")))
         .route("/packages/:_name", get(|()| serve_page("package.html")))
         .route("/login",           get(|()| serve_page("login.html")))
         .route("/register",        get(|()| serve_page("register.html")))

@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dependency Graph — Freight Registry</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    body { overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+
+    #toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 20px; height: 40px; flex-shrink: 0;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    #graph-search {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--text); border-radius: var(--radius);
+      padding: 4px 10px; font-size: 12px; width: 180px; outline: none;
+    }
+    #graph-search:focus { border-color: var(--accent); }
+    #toolbar-stats { color: var(--muted); margin-left: auto; font-size: 12px; }
+
+    #legend {
+      display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--muted);
+    }
+    .legend-dot {
+      display: inline-block; width: 10px; height: 10px;
+      border-radius: 50%; margin-right: 4px; vertical-align: middle;
+    }
+
+    #cy {
+      flex: 1;
+      background: var(--bg);
+    }
+
+    #tooltip {
+      position: fixed;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 12px;
+      font-size: 12px;
+      pointer-events: none;
+      display: none;
+      z-index: 200;
+      max-width: 260px;
+    }
+    #tooltip .tt-name { font-weight: 600; color: var(--text); }
+    #tooltip .tt-meta { color: var(--muted); margin-top: 2px; }
+
+    #graph-loading {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      color: var(--muted); font-size: 14px; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a href="/graph" style="color:var(--text)">Graph</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+  <button class="nav-settings-btn" id="nav-settings" aria-label="Settings" title="Settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+</nav>
+
+<div id="toolbar">
+  <input id="graph-search" type="search" placeholder="Highlight package…" autocomplete="off">
+  <div id="legend">
+    <span><span class="legend-dot" style="background:#1f6feb"></span>Package</span>
+    <span><span class="legend-dot" style="background:#f78166"></span>Popular (depended on)</span>
+    <span><span class="legend-dot" style="background:#3fb950"></span>No dependents</span>
+  </div>
+  <span id="toolbar-stats"></span>
+</div>
+
+<div id="cy">
+  <div id="graph-loading">
+    <div class="spinner"></div>
+    <span>Loading graph…</span>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script src="/app.js"></script>
+<script>
+'use strict';
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadScript(
+    'https://cdn.jsdelivr.net/npm/cytoscape@3.29.2/dist/cytoscape.min.js',
+    initGraph
+  );
+});
+
+async function initGraph() {
+  const params = new URLSearchParams(location.search);
+  const channel = params.get('channel') ?? undefined;
+
+  let graphData;
+  try {
+    let url = '/api/v1/graph';
+    if (channel) url += `?channel=${encodeURIComponent(channel)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    graphData = await r.json();
+  } catch (err) {
+    document.getElementById('graph-loading').innerHTML =
+      `<span style="color:var(--accent)">Failed to load graph: ${esc(err.message)}</span>`;
+    return;
+  }
+
+  document.getElementById('graph-loading').style.display = 'none';
+
+  // ── Build element lists ───────────────────────────────────────────────────
+
+  // Count in-degree for every node (how many packages depend on it)
+  const inDegree = {};
+  for (const pkg of graphData) {
+    if (!(pkg.name in inDegree)) inDegree[pkg.name] = 0;
+    for (const dep of (pkg.deps ?? [])) {
+      inDegree[dep] = (inDegree[dep] ?? 0) + 1;
+    }
+  }
+
+  // Known package names (in the registry)
+  const known = new Set(graphData.map(p => p.name));
+
+  const nodes = [];
+  const edges = [];
+
+  for (const pkg of graphData) {
+    const indeg = inDegree[pkg.name] ?? 0;
+    nodes.push({ data: { id: pkg.name, label: pkg.name, indegree: indeg, outdegree: pkg.deps?.length ?? 0 } });
+
+    for (const dep of (pkg.deps ?? [])) {
+      // Add phantom node for external deps (referenced but not in registry)
+      if (!known.has(dep)) {
+        if (!nodes.find(n => n.data.id === dep)) {
+          nodes.push({ data: { id: dep, label: dep, indegree: inDegree[dep] ?? 0, outdegree: 0, external: true } });
+        }
+      }
+      edges.push({ data: { id: `${pkg.name}>${dep}`, source: pkg.name, target: dep } });
+    }
+  }
+
+  const maxIndeg = Math.max(1, ...Object.values(inDegree));
+
+  // ── Build Cytoscape ───────────────────────────────────────────────────────
+
+  const cy = window.cytoscape({
+    container: document.getElementById('cy'),
+    elements: { nodes, edges },
+    layout: {
+      name: 'cose',
+      animate: false,
+      randomize: true,
+      nodeRepulsion: 8000,
+      idealEdgeLength: 80,
+      edgeElasticity: 0.45,
+      nestingFactor: 0.1,
+      gravity: 0.25,
+      numIter: 1000,
+      nodeDimensionsIncludeLabels: true,
+      padding: 40,
+    },
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': 'mapData(indegree, 0, ' + maxIndeg + ', #3fb950, #f78166)',
+          'border-color': '#30363d',
+          'border-width': 1,
+          'label': 'data(label)',
+          'color': '#e6edf3',
+          'font-size': 'mapData(indegree, 0, ' + maxIndeg + ', 9, 14)',
+          'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'width':  'mapData(indegree, 0, ' + maxIndeg + ', 28, 60)',
+          'height': 'mapData(indegree, 0, ' + maxIndeg + ', 28, 60)',
+          'shape': 'ellipse',
+          'cursor': 'pointer',
+          'text-wrap': 'none',
+          'min-zoomed-font-size': 8,
+        },
+      },
+      {
+        selector: 'node[?external]',
+        style: {
+          'background-color': '#21262d',
+          'border-color': '#484f58',
+          'color': '#8b949e',
+          'font-size': 8,
+          'width': 20, 'height': 20,
+        },
+      },
+      {
+        selector: 'node.dimmed',
+        style: { 'opacity': 0.15 },
+      },
+      {
+        selector: 'node.highlighted',
+        style: {
+          'border-color': '#f78166',
+          'border-width': 3,
+          'opacity': 1,
+        },
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width': 1,
+          'line-color': '#21262d',
+          'target-arrow-color': '#30363d',
+          'target-arrow-shape': 'triangle',
+          'curve-style': 'bezier',
+          'arrow-scale': 0.6,
+          'opacity': 0.6,
+        },
+      },
+      {
+        selector: 'edge.dimmed',
+        style: { 'opacity': 0.05 },
+      },
+      {
+        selector: 'edge.highlighted',
+        style: {
+          'line-color': '#f78166',
+          'target-arrow-color': '#f78166',
+          'opacity': 1, 'width': 2,
+        },
+      },
+    ],
+    userZoomingEnabled: true,
+    userPanningEnabled: true,
+    boxSelectionEnabled: false,
+    autoungrabify: false,
+    minZoom: 0.05,
+    maxZoom: 8,
+  });
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  const edgeCount = edges.length;
+  document.getElementById('toolbar-stats').textContent =
+    `${graphData.length} packages · ${edgeCount} dep edges`;
+
+  // ── Tooltip on hover ──────────────────────────────────────────────────────
+
+  const tooltip = document.getElementById('tooltip');
+
+  cy.on('mouseover', 'node', e => {
+    const d = e.target.data();
+    const ext = d.external ? ' <span style="color:var(--muted)">(external)</span>' : '';
+    tooltip.innerHTML = `
+      <div class="tt-name">${esc(d.label)}${ext}</div>
+      <div class="tt-meta">${d.indegree} dependent${d.indegree !== 1 ? 's' : ''} · ${d.outdegree} dep${d.outdegree !== 1 ? 's' : ''}</div>`;
+    tooltip.style.display = 'block';
+    e.target.style('cursor', 'pointer');
+  });
+
+  cy.on('mousemove', e => {
+    tooltip.style.left = (e.originalEvent.clientX + 14) + 'px';
+    tooltip.style.top  = (e.originalEvent.clientY + 14) + 'px';
+  });
+
+  cy.on('mouseout', 'node', () => { tooltip.style.display = 'none'; });
+
+  // ── Click → navigate ──────────────────────────────────────────────────────
+
+  cy.on('tap', 'node', e => {
+    const d = e.target.data();
+    if (!d.external) {
+      location.href = `/packages/${encodeURIComponent(d.id)}`;
+    }
+  });
+
+  // ── Search / highlight ────────────────────────────────────────────────────
+
+  const searchInput = document.getElementById('graph-search');
+  let highlightTimeout;
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(highlightTimeout);
+    highlightTimeout = setTimeout(() => applyHighlight(cy, searchInput.value.trim()), 150);
+  });
+
+  searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      applyHighlight(cy, '');
+    }
+  });
+});
+
+function applyHighlight(cy, query) {
+  if (!query) {
+    cy.elements().removeClass('dimmed highlighted');
+    return;
+  }
+  const q = query.toLowerCase();
+  const matched = cy.nodes().filter(n => n.data('label').toLowerCase().includes(q));
+
+  if (matched.length === 0) {
+    cy.elements().removeClass('highlighted').addClass('dimmed');
+    return;
+  }
+
+  // Highlight matched nodes + their neighbourhood (direct edges + neighbours)
+  const neighbourhood = matched.union(matched.connectedEdges()).union(matched.neighbourhood());
+  cy.elements().addClass('dimmed').removeClass('highlighted');
+  neighbourhood.removeClass('dimmed').addClass('highlighted');
+
+  // Pan to first exact match if there is one
+  const exact = matched.filter(n => n.data('label').toLowerCase() === q);
+  const focus = exact.length ? exact.first() : matched.first();
+  cy.animate({ center: { eles: focus }, zoom: Math.max(cy.zoom(), 1.5) }, { duration: 300 });
+}
+
+function loadScript(src, cb) {
+  if (window.cytoscape) { cb(); return; }
+  const s = document.createElement('script');
+  s.src = src;
+  s.onload = cb;
+  s.onerror = () => {
+    document.getElementById('graph-loading').innerHTML =
+      '<span style="color:var(--accent)">Could not load Cytoscape (network error).</span>';
+  };
+  document.head.appendChild(s);
+}
+</script>
+</body>
+</html>

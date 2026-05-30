@@ -681,7 +681,7 @@ function depStartForce(cy) {
       const nx = f * dx / d, ny = f * dy / d;
       fx[si] += nx; fy[si] += ny;
       fx[ti] -= nx; fy[ti] -= ny;
-    }
+    });
 
     for (let i = 0; i < cnt; i++) {
       const n = nodeArr[i];

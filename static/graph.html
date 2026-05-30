@@ -256,8 +256,8 @@ function renderPackage(name) {
     data: { id: `e${i}`, source: e.source, target: e.target },
   }));
 
+  if (window._floatCancel) { window._floatCancel(); window._floatCancel = null; }
   if (cy) { cy.destroy(); cy = null; }
-  if (window._floatRaf) { cancelAnimationFrame(window._floatRaf); window._floatRaf = null; }
 
   cy = window.cytoscape({
     container: document.getElementById('cy'),
@@ -337,7 +337,7 @@ function renderPackage(name) {
   });
 
   // ── Force simulation ──────────────────────────────────────────────────────
-  cy.one('layoutstop', () => { window._floatRaf = startForce(cy); });
+  cy.one('layoutstop', () => { window._floatCancel = startForce(cy); });
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
   const tooltip = document.getElementById('tooltip');
@@ -461,12 +461,12 @@ function setupSearch() {
 // Returns a cancel function.
 
 function startForce(cy) {
-  const REPULSION  = 4000;   // node-node repulsion strength
-  const SPRING_K   = 0.05;   // edge spring stiffness
-  const SPRING_LEN = 110;    // edge natural length (px)
-  const DAMPING    = 0.78;   // velocity decay per tick
-  const GRAVITY    = 0.004;  // weak pull toward viewport center
-  const NUDGE      = 0.12;   // random kick to prevent full settling
+  const REPULSION  = 5000;   // node-node repulsion strength
+  const SPRING_K   = 0.15;   // edge spring stiffness
+  const SPRING_LEN = 60;     // rest length — springs only pull when stretched past this
+  const DAMPING    = 0.82;   // velocity decay per tick
+  const GRAVITY    = 0.003;  // weak pull toward viewport center
+  const NUDGE      = 0.05;   // small random kick to prevent complete freezing
   const MIN_DIST   = 18;
 
   const vel = {};
@@ -506,7 +506,7 @@ function startForce(cy) {
       const ps = nodeArr[si].position(), pt = nodeArr[ti].position();
       const dx = pt.x - ps.x, dy = pt.y - ps.y;
       const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
-      const f  = SPRING_K * (d - SPRING_LEN);
+      const f  = Math.max(0, SPRING_K * (d - SPRING_LEN)); // rubber band: only pull
       const nx = f * dx / d, ny = f * dy / d;
       fx[si] += nx; fy[si] += ny;
       fx[ti] -= nx; fy[ti] -= ny;

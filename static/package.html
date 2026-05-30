@@ -614,8 +614,8 @@ function buildDepGraph(rootName, depsMap, container) {
   });
 
   // ── Force simulation ────────────────────────────────────────────────────────
-  let floatRaf = null;
-  cy.one('layoutstop', () => { floatRaf = depStartForce(cy); });
+  let floatCancel = null;
+  cy.one('layoutstop', () => { floatCancel = depStartForce(cy); });
 
   cy.on('mouseover', 'node', e => {
     container.style.cursor = 'pointer';
@@ -628,18 +628,18 @@ function buildDepGraph(rootName, depsMap, container) {
   });
   cy.on('tap', 'node', e => {
     const id = e.target.data('id');
-    if (floatRaf) { cancelAnimationFrame(floatRaf); floatRaf = null; }
+    if (floatCancel) { floatCancel(); floatCancel = null; }
     if (id !== rootName) location.href = `/packages/${encodeURIComponent(id)}`;
   });
 }
 
 function depStartForce(cy) {
-  const REPULSION  = 3500;
-  const SPRING_K   = 0.05;
-  const SPRING_LEN = 100;
-  const DAMPING    = 0.78;
-  const GRAVITY    = 0.004;
-  const NUDGE      = 0.10;
+  const REPULSION  = 5000;
+  const SPRING_K   = 0.15;
+  const SPRING_LEN = 60;     // rest length — springs only pull when stretched past this
+  const DAMPING    = 0.82;
+  const GRAVITY    = 0.003;
+  const NUDGE      = 0.05;
   const MIN_DIST   = 18;
 
   const vel = {};
@@ -669,19 +669,18 @@ function depStartForce(cy) {
       }
     }
 
-    const idxOf = Object.fromEntries(nodeArr.map((n, i) => [n.id(), i]));
-    cy.edges().forEach(e => {
+    for (const e of edgeArr) {
       const si = idxOf[e.source().id()];
       const ti = idxOf[e.target().id()];
-      if (si == null || ti == null) return;
+      if (si == null || ti == null) continue;
       const ps = nodeArr[si].position(), pt = nodeArr[ti].position();
       const dx = pt.x - ps.x, dy = pt.y - ps.y;
       const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
-      const f  = SPRING_K * (d - SPRING_LEN);
+      const f  = Math.max(0, SPRING_K * (d - SPRING_LEN)); // rubber band: only pull
       const nx = f * dx / d, ny = f * dy / d;
       fx[si] += nx; fy[si] += ny;
       fx[ti] -= nx; fy[ti] -= ny;
-    });
+    }
 
     for (let i = 0; i < cnt; i++) {
       const n = nodeArr[i];

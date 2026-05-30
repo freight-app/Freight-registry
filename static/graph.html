@@ -464,16 +464,20 @@ function setupSearch() {
 // Returns a cancel function.
 
 function startForce(cy) {
-  const REPULSION  = 5000;   // node-node repulsion strength
-  const SPRING_K   = 0.15;   // edge spring stiffness
-  const SPRING_LEN = 60;     // rest length — springs only pull when stretched past this
-  const DAMPING    = 0.82;   // velocity decay per tick
-  const GRAVITY    = 0.003;  // weak pull toward viewport center
-  const NUDGE      = 0.05;   // small random kick to prevent complete freezing
-  const MIN_DIST   = 18;
+  // Terminal velocity = F * DAMPING / (1 - DAMPING).
+  // With DAMPING=0.88 and max spring F≈1 at typical stretch, term. v ≈ 7 px/tick.
+  // MAX_SPEED clamps explosions when many edges pile force onto one node.
+  const REPULSION  = 2000;   // node-node repulsion (1/d²)
+  const SPRING_K   = 0.008;  // edge spring — must be < 0.016 to stay stable at D=0.88
+  const SPRING_LEN = 80;     // rest length; springs only pull when d > this
+  const DAMPING    = 0.88;   // velocity retention per tick (higher = smoother)
+  const GRAVITY    = 0.001;  // weak center pull to keep graph on screen
+  const NUDGE      = 0.03;   // tiny jitter so nodes don't fully freeze
+  const MIN_DIST   = 20;
+  const MAX_SPEED  = 10;     // px/tick velocity cap prevents runaway nodes
 
   const vel = {};
-  cy.nodes().forEach(n => { vel[n.id()] = { x: (Math.random()-.5)*2, y: (Math.random()-.5)*2 }; });
+  cy.nodes().forEach(n => { vel[n.id()] = { x: 0, y: 0 }; });
 
   const nodeArr = cy.nodes().toArray();
   const cnt     = nodeArr.length;
@@ -501,7 +505,7 @@ function startForce(cy) {
       }
     }
 
-    // Spring attraction along edges
+    // Spring attraction along edges (rubber band: only pulls when stretched)
     for (const e of edgeArr) {
       const si = idxOf[e.source().id()];
       const ti = idxOf[e.target().id()];
@@ -509,22 +513,23 @@ function startForce(cy) {
       const ps = nodeArr[si].position(), pt = nodeArr[ti].position();
       const dx = pt.x - ps.x, dy = pt.y - ps.y;
       const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
-      const f  = Math.max(0, SPRING_K * (d - SPRING_LEN)); // rubber band: only pull
+      const f  = Math.max(0, SPRING_K * (d - SPRING_LEN));
       const nx = f * dx / d, ny = f * dy / d;
       fx[si] += nx; fy[si] += ny;
       fx[ti] -= nx; fy[ti] -= ny;
     }
 
-    // Integrate
+    // Integrate with velocity cap
     for (let i = 0; i < cnt; i++) {
       const n = nodeArr[i];
       const p = n.position();
       const v = vel[n.id()];
-      // Gravity toward center
       fx[i] += GRAVITY * (cx - p.x);
       fy[i] += GRAVITY * (cy_ - p.y);
       v.x = (v.x + fx[i]) * DAMPING + (Math.random() - 0.5) * NUDGE;
       v.y = (v.y + fy[i]) * DAMPING + (Math.random() - 0.5) * NUDGE;
+      const spd = Math.sqrt(v.x*v.x + v.y*v.y);
+      if (spd > MAX_SPEED) { v.x = v.x/spd*MAX_SPEED; v.y = v.y/spd*MAX_SPEED; }
       n.position({ x: p.x + v.x, y: p.y + v.y });
     }
 

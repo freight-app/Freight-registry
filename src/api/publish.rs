@@ -39,6 +39,9 @@ struct PublishMeta {
     /// Platform support expression (e.g. "!uwp & !arm"). Uses freight boolean syntax.
     #[serde(default)]
     supports: Option<String>,
+    /// Pre-computed dependency map for metadata-only packages (name → version constraint).
+    #[serde(default)]
+    deps: Option<serde_json::Value>,
 }
 
 pub async fn publish(
@@ -108,7 +111,10 @@ pub async fn publish(
     };
 
     let dependencies = if is_metadata_only {
-        "{}".to_string()
+        meta.deps
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .unwrap_or_else(|| "{}".to_string())
     } else {
         extract_dependencies(tarball)
     };

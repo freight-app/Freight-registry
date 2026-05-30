@@ -10,52 +10,65 @@
     body { overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
 
     #toolbar {
-      display: flex; align-items: center; gap: 12px;
-      padding: 0 20px; height: 40px; flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 16px; height: 44px; flex-shrink: 0;
       background: var(--surface); border-bottom: 1px solid var(--border);
-      font-size: 13px;
+      font-size: 13px; position: relative;
     }
-    #graph-search {
+
+    #pkg-search-wrap { position: relative; }
+    #pkg-search {
       background: var(--bg); border: 1px solid var(--border);
       color: var(--text); border-radius: var(--radius);
-      padding: 4px 10px; font-size: 12px; width: 180px; outline: none;
+      padding: 5px 12px; font-size: 13px; width: 220px; outline: none;
     }
-    #graph-search:focus { border-color: var(--accent); }
+    #pkg-search:focus { border-color: var(--accent); }
+
+    #autocomplete {
+      position: absolute; top: calc(100% + 4px); left: 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); width: 280px; max-height: 240px;
+      overflow-y: auto; z-index: 300; display: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .ac-item {
+      padding: 6px 12px; cursor: pointer; font-size: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+      color: var(--text);
+    }
+    .ac-item:hover, .ac-item.active { background: var(--border); }
+    .ac-count { color: var(--muted); font-size: 11px; }
+
+    #toolbar-info {
+      color: var(--muted); font-size: 12px;
+    }
+    #toolbar-root {
+      font-weight: 600; color: var(--text); font-size: 13px;
+    }
     #toolbar-stats { color: var(--muted); margin-left: auto; font-size: 12px; }
 
-    #legend {
-      display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--muted);
-    }
-    .legend-dot {
-      display: inline-block; width: 10px; height: 10px;
-      border-radius: 50%; margin-right: 4px; vertical-align: middle;
-    }
-
-    #cy {
-      flex: 1;
-      background: var(--bg);
-    }
-
-    #tooltip {
-      position: fixed;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 6px 12px;
-      font-size: 12px;
-      pointer-events: none;
-      display: none;
-      z-index: 200;
-      max-width: 260px;
-    }
-    #tooltip .tt-name { font-weight: 600; color: var(--text); }
-    #tooltip .tt-meta { color: var(--muted); margin-top: 2px; }
+    #cy { flex: 1; background: var(--bg); }
 
     #graph-loading {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       display: flex; flex-direction: column; align-items: center; gap: 12px;
-      color: var(--muted); font-size: 14px; pointer-events: none;
+      color: var(--muted); font-size: 14px; pointer-events: none; z-index: 10;
     }
+
+    #empty-state {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      text-align: center; color: var(--muted); pointer-events: none;
+    }
+    #empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+    #empty-state p  { font-size: 13px; }
+
+    #tooltip {
+      position: fixed; background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 8px 12px; font-size: 12px;
+      pointer-events: none; display: none; z-index: 200; max-width: 280px;
+    }
+    #tooltip .tt-name { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+    #tooltip .tt-meta { color: var(--muted); line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -89,160 +102,224 @@
 </nav>
 
 <div id="toolbar">
-  <input id="graph-search" type="search" placeholder="Highlight package…" autocomplete="off">
-  <div id="legend">
-    <span><span class="legend-dot" style="background:#1f6feb"></span>Package</span>
-    <span><span class="legend-dot" style="background:#f78166"></span>Popular (depended on)</span>
-    <span><span class="legend-dot" style="background:#3fb950"></span>No dependents</span>
+  <div id="pkg-search-wrap">
+    <input id="pkg-search" type="search" placeholder="Pick a package…" autocomplete="off" spellcheck="false">
+    <div id="autocomplete"></div>
   </div>
+  <span id="toolbar-root"></span>
+  <span id="toolbar-info"></span>
   <span id="toolbar-stats"></span>
 </div>
 
 <div id="cy">
   <div id="graph-loading">
     <div class="spinner"></div>
-    <span>Loading graph…</span>
+    <span>Loading registry data…</span>
+  </div>
+  <div id="empty-state" style="display:none">
+    <h2>Dependency graph</h2>
+    <p>Search for a package above to explore its recursive dependency tree.</p>
   </div>
 </div>
 
 <div id="tooltip"></div>
 
 <script src="/app.js"></script>
+<script src="/cytoscape.min.js"></script>
 <script>
 'use strict';
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadScript(
-    'https://cdn.jsdelivr.net/npm/cytoscape@3.29.2/dist/cytoscape.min.js',
-    initGraph
-  );
+// Global state
+let depsMap   = {};  // name → [dep names]  (direct deps)
+let allNames  = [];  // sorted list of all package names
+let transCache = {}; // name → Set of all transitive dep names
+let cy        = null;
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadData();
+  setupSearch();
+
+  // If ?pkg= in URL, render immediately
+  const params = new URLSearchParams(location.search);
+  const pkg = params.get('pkg');
+  if (pkg && depsMap[pkg] !== undefined) {
+    document.getElementById('pkg-search').value = pkg;
+    renderPackage(pkg);
+  }
 });
 
-async function initGraph() {
-  const params = new URLSearchParams(location.search);
-  const channel = params.get('channel') ?? undefined;
+// ── Data loading ─────────────────────────────────────────────────────────────
 
-  let graphData;
-  try {
-    let url = '/api/v1/graph';
-    if (channel) url += `?channel=${encodeURIComponent(channel)}`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    graphData = await r.json();
-  } catch (err) {
-    document.getElementById('graph-loading').innerHTML =
-      `<span style="color:var(--accent)">Failed to load graph: ${esc(err.message)}</span>`;
-    return;
+async function loadData() {
+  const params  = new URLSearchParams(location.search);
+  const channel = params.get('channel') ?? undefined;
+  let url = '/api/v1/graph';
+  if (channel) url += `?channel=${encodeURIComponent(channel)}`;
+
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+
+  for (const pkg of data) {
+    depsMap[pkg.name] = pkg.deps ?? [];
   }
+  allNames = Object.keys(depsMap).sort();
 
   document.getElementById('graph-loading').style.display = 'none';
+  document.getElementById('empty-state').style.display   = 'block';
+}
 
-  // ── Build element lists ───────────────────────────────────────────────────
+// ── Transitive closure ───────────────────────────────────────────────────────
 
-  // Count in-degree for every node (how many packages depend on it)
-  const inDegree = {};
-  for (const pkg of graphData) {
-    if (!(pkg.name in inDegree)) inDegree[pkg.name] = 0;
-    for (const dep of (pkg.deps ?? [])) {
-      inDegree[dep] = (inDegree[dep] ?? 0) + 1;
+// Returns a Set of all transitive dependency names for `name` (excluding itself).
+function transitiveDeps(root) {
+  if (transCache[root]) return transCache[root];
+  const visited = new Set();
+  const stack = [root];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const dep of (depsMap[cur] ?? [])) {
+      if (!visited.has(dep)) {
+        visited.add(dep);
+        stack.push(dep);
+      }
     }
   }
+  transCache[root] = visited;
+  return visited;
+}
 
-  // Known package names (in the registry)
-  const known = new Set(graphData.map(p => p.name));
+// ── Tree builder ─────────────────────────────────────────────────────────────
 
+// Build a tree (DAG with cycle-breaking) rooted at `root`.
+// Returns { nodes: [{id, label, data}], edges: [{source, target}] }
+function buildTree(root) {
   const nodes = [];
   const edges = [];
+  const seen  = new Set(); // nodes already added to the tree (cycle guard)
 
-  for (const pkg of graphData) {
-    const indeg = inDegree[pkg.name] ?? 0;
-    nodes.push({ data: { id: pkg.name, label: pkg.name, indegree: indeg, outdegree: pkg.deps?.length ?? 0 } });
+  // BFS preserving order
+  const queue = [root];
+  seen.add(root);
 
-    for (const dep of (pkg.deps ?? [])) {
-      // Add phantom node for external deps (referenced but not in registry)
-      if (!known.has(dep)) {
-        if (!nodes.find(n => n.data.id === dep)) {
-          nodes.push({ data: { id: dep, label: dep, indegree: inDegree[dep] ?? 0, outdegree: 0, external: true } });
-        }
+  while (queue.length) {
+    const name = queue.shift();
+    const tc   = transitiveDeps(name).size;
+    const isRoot = name === root;
+    nodes.push({ id: name, label: name, transCount: tc, isRoot });
+
+    for (const dep of (depsMap[name] ?? [])) {
+      edges.push({ source: name, target: dep });
+      if (!seen.has(dep)) {
+        seen.add(dep);
+        queue.push(dep);
       }
-      edges.push({ data: { id: `${pkg.name}>${dep}`, source: pkg.name, target: dep } });
+      // If dep already seen: edge is drawn but no duplicate node added.
     }
   }
 
-  const maxIndeg = Math.max(1, ...Object.values(inDegree));
+  return { nodes, edges };
+}
 
-  // ── Build Cytoscape ───────────────────────────────────────────────────────
+// ── Render ───────────────────────────────────────────────────────────────────
 
-  const cy = window.cytoscape({
+function renderPackage(name) {
+  document.getElementById('empty-state')?.remove();
+
+  const { nodes, edges } = buildTree(name);
+  const totalTransitive  = transitiveDeps(name).size;
+
+  // Update URL
+  const u = new URL(location.href);
+  u.searchParams.set('pkg', name);
+  history.replaceState(null, '', u);
+
+  // Toolbar
+  document.getElementById('toolbar-root').textContent = name;
+  document.getElementById('toolbar-info').textContent =
+    `→ ${totalTransitive} transitive package${totalTransitive !== 1 ? 's' : ''}`;
+  document.getElementById('toolbar-stats').textContent =
+    `${nodes.length} nodes · ${edges.length} edges`;
+
+  const maxTC = Math.max(1, ...nodes.map(n => n.transCount));
+
+  const cyNodes = nodes.map(n => ({
+    data: {
+      id:         n.id,
+      label:      n.label,
+      transCount: n.transCount,
+      isRoot:     n.isRoot,
+    },
+  }));
+
+  const cyEdges = edges.map((e, i) => ({
+    data: { id: `e${i}`, source: e.source, target: e.target },
+  }));
+
+  if (cy) { cy.destroy(); cy = null; }
+  if (window._floatRaf) { cancelAnimationFrame(window._floatRaf); window._floatRaf = null; }
+
+  cy = window.cytoscape({
     container: document.getElementById('cy'),
-    elements: { nodes, edges },
+    elements:  { nodes: cyNodes, edges: cyEdges },
     layout: {
-      name: 'cose',
-      animate: false,
-      randomize: true,
-      nodeRepulsion: 8000,
-      idealEdgeLength: 80,
-      edgeElasticity: 0.45,
-      nestingFactor: 0.1,
-      gravity: 0.25,
-      numIter: 1000,
+      name:          'breadthfirst',
+      directed:      true,
+      spacingFactor: 1.4,
+      padding:       48,
+      avoidOverlap:  true,
       nodeDimensionsIncludeLabels: true,
-      padding: 40,
     },
     style: [
       {
         selector: 'node',
         style: {
-          'background-color': 'mapData(indegree, 0, ' + maxIndeg + ', #3fb950, #f78166)',
-          'border-color': '#30363d',
-          'border-width': 1,
-          'label': 'data(label)',
-          'color': '#e6edf3',
-          'font-size': 'mapData(indegree, 0, ' + maxIndeg + ', 9, 14)',
-          'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'width':  'mapData(indegree, 0, ' + maxIndeg + ', 28, 60)',
-          'height': 'mapData(indegree, 0, ' + maxIndeg + ', 28, 60)',
-          'shape': 'ellipse',
-          'cursor': 'pointer',
-          'text-wrap': 'none',
-          'min-zoomed-font-size': 8,
-        },
-      },
-      {
-        selector: 'node[?external]',
-        style: {
-          'background-color': '#21262d',
-          'border-color': '#484f58',
-          'color': '#8b949e',
-          'font-size': 8,
-          'width': 20, 'height': 20,
-        },
-      },
-      {
-        selector: 'node.dimmed',
-        style: { 'opacity': 0.15 },
-      },
-      {
-        selector: 'node.highlighted',
-        style: {
-          'border-color': '#f78166',
-          'border-width': 3,
-          'opacity': 1,
+          'background-color': ele => {
+            if (ele.data('isRoot')) return '#f78166';
+            const t = Math.min(ele.data('transCount') / maxTC, 1);
+            return lerpColor('#2d4a2d', '#f0a000', t);
+          },
+          'border-color':  ele => ele.data('isRoot') ? '#ff9580' : '#30363d',
+          'border-width':  ele => ele.data('isRoot') ? 2 : 1,
+          'label':         ele => {
+            const tc = ele.data('transCount');
+            return tc > 0 ? `${ele.data('label')}\n(+${tc})` : ele.data('label');
+          },
+          'color':            '#e6edf3',
+          'font-size':        ele => ele.data('isRoot') ? 12 : 10,
+          'font-family':      '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          'text-valign':      'center',
+          'text-halign':      'center',
+          'text-wrap':        'wrap',
+          'width':            ele => {
+            const base = ele.data('isRoot') ? 80 : 60;
+            const extra = Math.min(ele.data('transCount') / maxTC * 30, 30);
+            return base + extra;
+          },
+          'height':           ele => ele.data('isRoot') ? 40 : 30,
+          'shape':            'round-rectangle',
+          'min-zoomed-font-size': 7,
         },
       },
       {
         selector: 'edge',
         style: {
-          'width': 1,
-          'line-color': '#21262d',
-          'target-arrow-color': '#30363d',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-          'arrow-scale': 0.6,
-          'opacity': 0.6,
+          'width':               1,
+          'line-color':          '#30363d',
+          'target-arrow-color':  '#484f58',
+          'target-arrow-shape':  'triangle',
+          'curve-style':         'bezier',
+          'arrow-scale':         0.6,
+          'opacity':             0.7,
         },
+      },
+      {
+        selector: 'node.highlighted',
+        style: { 'border-color': '#58a6ff', 'border-width': 3, 'opacity': 1 },
+      },
+      {
+        selector: 'node.dimmed',
+        style: { 'opacity': 0.2 },
       },
       {
         selector: 'edge.dimmed',
@@ -250,109 +327,223 @@ async function initGraph() {
       },
       {
         selector: 'edge.highlighted',
-        style: {
-          'line-color': '#f78166',
-          'target-arrow-color': '#f78166',
-          'opacity': 1, 'width': 2,
-        },
+        style: { 'line-color': '#58a6ff', 'target-arrow-color': '#58a6ff', 'opacity': 1, 'width': 2 },
       },
     ],
     userZoomingEnabled: true,
     userPanningEnabled: true,
-    boxSelectionEnabled: false,
-    autoungrabify: false,
     minZoom: 0.05,
     maxZoom: 8,
   });
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
+  // ── Force simulation ──────────────────────────────────────────────────────
+  cy.one('layoutstop', () => { window._floatRaf = startForce(cy); });
 
-  const edgeCount = edges.length;
-  document.getElementById('toolbar-stats').textContent =
-    `${graphData.length} packages · ${edgeCount} dep edges`;
-
-  // ── Tooltip on hover ──────────────────────────────────────────────────────
-
+  // ── Tooltip ────────────────────────────────────────────────────────────────
   const tooltip = document.getElementById('tooltip');
 
+  const cyContainer = document.getElementById('cy');
   cy.on('mouseover', 'node', e => {
-    const d = e.target.data();
-    const ext = d.external ? ' <span style="color:var(--muted)">(external)</span>' : '';
+    cyContainer.style.cursor = 'pointer';
+    e.target.style({ 'border-color': '#58a6ff', 'border-width': 2 });
+    const d  = e.target.data();
+    const tc = d.transCount;
+    const direct = (depsMap[d.id] ?? []).length;
     tooltip.innerHTML = `
-      <div class="tt-name">${esc(d.label)}${ext}</div>
-      <div class="tt-meta">${d.indegree} dependent${d.indegree !== 1 ? 's' : ''} · ${d.outdegree} dep${d.outdegree !== 1 ? 's' : ''}</div>`;
+      <div class="tt-name">${esc(d.label)}</div>
+      <div class="tt-meta">
+        ${direct} direct dep${direct !== 1 ? 's' : ''}<br>
+        ${tc} transitive package${tc !== 1 ? 's' : ''} total
+      </div>`;
     tooltip.style.display = 'block';
-    e.target.style('cursor', 'pointer');
   });
-
+  cy.on('mouseout', 'node', e => {
+    cyContainer.style.cursor = '';
+    const isRoot = e.target.data('isRoot');
+    e.target.style({
+      'border-color': isRoot ? '#ff9580' : '#30363d',
+      'border-width': isRoot ? 2 : 1,
+    });
+    tooltip.style.display = 'none';
+  });
   cy.on('mousemove', e => {
     tooltip.style.left = (e.originalEvent.clientX + 14) + 'px';
     tooltip.style.top  = (e.originalEvent.clientY + 14) + 'px';
   });
 
-  cy.on('mouseout', 'node', () => { tooltip.style.display = 'none'; });
-
-  // ── Click → navigate ──────────────────────────────────────────────────────
-
+  // ── Click: re-root on single click, navigate on double ───────────────────
+  let clickTimer = null;
   cy.on('tap', 'node', e => {
-    const d = e.target.data();
-    if (!d.external) {
-      location.href = `/packages/${encodeURIComponent(d.id)}`;
+    const id = e.target.data('id');
+    if (clickTimer) {
+      clearTimeout(clickTimer);
+      clickTimer = null;
+      location.href = `/packages/${encodeURIComponent(id)}`;
+    } else {
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        if (id !== name) {
+          document.getElementById('pkg-search').value = id;
+          renderPackage(id);
+        }
+      }, 220);
     }
   });
-
-  // ── Search / highlight ────────────────────────────────────────────────────
-
-  const searchInput = document.getElementById('graph-search');
-  let highlightTimeout;
-
-  searchInput.addEventListener('input', () => {
-    clearTimeout(highlightTimeout);
-    highlightTimeout = setTimeout(() => applyHighlight(cy, searchInput.value.trim()), 150);
-  });
-
-  searchInput.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      searchInput.value = '';
-      applyHighlight(cy, '');
-    }
-  });
-});
-
-function applyHighlight(cy, query) {
-  if (!query) {
-    cy.elements().removeClass('dimmed highlighted');
-    return;
-  }
-  const q = query.toLowerCase();
-  const matched = cy.nodes().filter(n => n.data('label').toLowerCase().includes(q));
-
-  if (matched.length === 0) {
-    cy.elements().removeClass('highlighted').addClass('dimmed');
-    return;
-  }
-
-  // Highlight matched nodes + their neighbourhood (direct edges + neighbours)
-  const neighbourhood = matched.union(matched.connectedEdges()).union(matched.neighbourhood());
-  cy.elements().addClass('dimmed').removeClass('highlighted');
-  neighbourhood.removeClass('dimmed').addClass('highlighted');
-
-  // Pan to first exact match if there is one
-  const exact = matched.filter(n => n.data('label').toLowerCase() === q);
-  const focus = exact.length ? exact.first() : matched.first();
-  cy.animate({ center: { eles: focus }, zoom: Math.max(cy.zoom(), 1.5) }, { duration: 300 });
 }
 
-function loadScript(src, cb) {
-  if (window.cytoscape) { cb(); return; }
-  const s = document.createElement('script');
-  s.src = src;
-  s.onload = cb;
-  s.onerror = () => {
-    document.getElementById('graph-loading').innerHTML =
-      '<span style="color:var(--accent)">Could not load Cytoscape (network error).</span>';
-  };
-  document.head.appendChild(s);
+// ── Search / autocomplete ─────────────────────────────────────────────────────
+
+function setupSearch() {
+  const input = document.getElementById('pkg-search');
+  const ac    = document.getElementById('autocomplete');
+  let acIdx   = -1;
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim().toLowerCase();
+    if (!q) { ac.style.display = 'none'; return; }
+
+    const matches = allNames
+      .filter(n => n.toLowerCase().includes(q))
+      .slice(0, 30);
+
+    if (!matches.length) { ac.style.display = 'none'; return; }
+
+    ac.innerHTML = matches.map((n, i) => {
+      const tc = transitiveDeps(n).size;
+      return `<div class="ac-item" data-name="${esc(n)}" data-idx="${i}">
+        <span>${esc(n)}</span>
+        <span class="ac-count">${tc > 0 ? `+${tc}` : '—'}</span>
+      </div>`;
+    }).join('');
+    acIdx = -1;
+    ac.style.display = 'block';
+  });
+
+  input.addEventListener('keydown', e => {
+    const items = ac.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') {
+      acIdx = Math.min(acIdx + 1, items.length - 1);
+      items.forEach((el, i) => el.classList.toggle('active', i === acIdx));
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      acIdx = Math.max(acIdx - 1, -1);
+      items.forEach((el, i) => el.classList.toggle('active', i === acIdx));
+      e.preventDefault();
+    } else if (e.key === 'Enter') {
+      const name = acIdx >= 0 ? items[acIdx]?.dataset.name : input.value.trim();
+      if (name && depsMap[name] !== undefined) { select(name); }
+      e.preventDefault();
+    } else if (e.key === 'Escape') {
+      ac.style.display = 'none';
+    }
+  });
+
+  ac.addEventListener('mousedown', e => {
+    const item = e.target.closest('.ac-item');
+    if (item) { e.preventDefault(); select(item.dataset.name); }
+  });
+
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !ac.contains(e.target)) {
+      ac.style.display = 'none';
+    }
+  });
+
+  function select(name) {
+    input.value = name;
+    ac.style.display = 'none';
+    renderPackage(name);
+  }
+}
+
+// ── Force simulation ──────────────────────────────────────────────────────────
+// Runs a continuous spring-repulsion loop on a Cytoscape instance.
+// Returns a cancel function.
+
+function startForce(cy) {
+  const REPULSION  = 4000;   // node-node repulsion strength
+  const SPRING_K   = 0.05;   // edge spring stiffness
+  const SPRING_LEN = 110;    // edge natural length (px)
+  const DAMPING    = 0.78;   // velocity decay per tick
+  const GRAVITY    = 0.004;  // weak pull toward viewport center
+  const NUDGE      = 0.12;   // random kick to prevent full settling
+  const MIN_DIST   = 18;
+
+  const vel = {};
+  cy.nodes().forEach(n => { vel[n.id()] = { x: (Math.random()-.5)*2, y: (Math.random()-.5)*2 }; });
+
+  const nodeArr = cy.nodes().toArray();
+  const cnt     = nodeArr.length;
+  const idxOf   = Object.fromEntries(nodeArr.map((n, i) => [n.id(), i]));
+  const edgeArr = cy.edges().toArray();
+
+  let raf;
+  function tick() {
+    const cx  = cy.width()  / 2;
+    const cy_ = cy.height() / 2;
+    const fx  = new Float64Array(cnt);
+    const fy  = new Float64Array(cnt);
+
+    // Repulsion O(n²)
+    for (let i = 0; i < cnt; i++) {
+      const pi = nodeArr[i].position();
+      for (let j = i + 1; j < cnt; j++) {
+        const pj = nodeArr[j].position();
+        const dx = pj.x - pi.x, dy = pj.y - pi.y;
+        const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
+        const f  = REPULSION / (d * d);
+        const nx = f * dx / d, ny = f * dy / d;
+        fx[i] -= nx; fy[i] -= ny;
+        fx[j] += nx; fy[j] += ny;
+      }
+    }
+
+    // Spring attraction along edges
+    for (const e of edgeArr) {
+      const si = idxOf[e.source().id()];
+      const ti = idxOf[e.target().id()];
+      if (si == null || ti == null) continue;
+      const ps = nodeArr[si].position(), pt = nodeArr[ti].position();
+      const dx = pt.x - ps.x, dy = pt.y - ps.y;
+      const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
+      const f  = SPRING_K * (d - SPRING_LEN);
+      const nx = f * dx / d, ny = f * dy / d;
+      fx[si] += nx; fy[si] += ny;
+      fx[ti] -= nx; fy[ti] -= ny;
+    }
+
+    // Integrate
+    for (let i = 0; i < cnt; i++) {
+      const n = nodeArr[i];
+      const p = n.position();
+      const v = vel[n.id()];
+      // Gravity toward center
+      fx[i] += GRAVITY * (cx - p.x);
+      fy[i] += GRAVITY * (cy_ - p.y);
+      v.x = (v.x + fx[i]) * DAMPING + (Math.random() - 0.5) * NUDGE;
+      v.y = (v.y + fy[i]) * DAMPING + (Math.random() - 0.5) * NUDGE;
+      n.position({ x: p.x + v.x, y: p.y + v.y });
+    }
+
+    raf = requestAnimationFrame(tick);
+  }
+  raf = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(raf);
+}
+
+// ── Colour helper ─────────────────────────────────────────────────────────────
+
+function lerpColor(a, b, t) {
+  const parse = h => [
+    parseInt(h.slice(1,3),16),
+    parseInt(h.slice(3,5),16),
+    parseInt(h.slice(5,7),16),
+  ];
+  const ca = parse(a), cb = parse(b);
+  const r = Math.round(ca[0] + (cb[0]-ca[0])*t);
+  const g = Math.round(ca[1] + (cb[1]-ca[1])*t);
+  const bl= Math.round(ca[2] + (cb[2]-ca[2])*t);
+  return `rgb(${r},${g},${bl})`;
 }
 </script>
 </body>

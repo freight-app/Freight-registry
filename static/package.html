@@ -559,14 +559,6 @@ function buildDepGraph(rootName, depsMap, container) {
   const cy = window.cytoscape({
     container,
     elements: { nodes, edges },
-    layout: {
-      name: 'breadthfirst',
-      directed: true,
-      spacingFactor: 1.3,
-      padding: 24,
-      avoidOverlap: true,
-      nodeDimensionsIncludeLabels: true,
-    },
     style: [
       {
         selector: 'node',
@@ -615,7 +607,17 @@ function buildDepGraph(rootName, depsMap, container) {
 
   // ── Force simulation ────────────────────────────────────────────────────────
   let floatCancel = null;
+  // Register before .run() — breadthfirst fires layoutstop synchronously inside run()
   cy.one('layoutstop', () => { floatCancel = depStartForce(cy); });
+
+  cy.layout({
+    name: 'breadthfirst',
+    directed: true,
+    spacingFactor: 1.3,
+    padding: 24,
+    avoidOverlap: true,
+    nodeDimensionsIncludeLabels: true,
+  }).run();
 
   cy.on('mouseover', 'node', e => {
     container.style.cursor = 'pointer';

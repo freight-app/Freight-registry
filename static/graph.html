@@ -262,14 +262,6 @@ function renderPackage(name) {
   cy = window.cytoscape({
     container: document.getElementById('cy'),
     elements:  { nodes: cyNodes, edges: cyEdges },
-    layout: {
-      name:          'breadthfirst',
-      directed:      true,
-      spacingFactor: 1.4,
-      padding:       48,
-      avoidOverlap:  true,
-      nodeDimensionsIncludeLabels: true,
-    },
     style: [
       {
         selector: 'node',
@@ -337,7 +329,18 @@ function renderPackage(name) {
   });
 
   // ── Force simulation ──────────────────────────────────────────────────────
+  // Register before running layout — breadthfirst is synchronous so layoutstop
+  // fires inside .run(), which would be too late if registered after.
   cy.one('layoutstop', () => { window._floatCancel = startForce(cy); });
+
+  cy.layout({
+    name:          'breadthfirst',
+    directed:      true,
+    spacingFactor: 1.4,
+    padding:       48,
+    avoidOverlap:  true,
+    nodeDimensionsIncludeLabels: true,
+  }).run();
 
   // ── Tooltip ────────────────────────────────────────────────────────────────
   const tooltip = document.getElementById('tooltip');

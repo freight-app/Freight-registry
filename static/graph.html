@@ -465,24 +465,25 @@ function setupSearch() {
 
 function startForce(cy) {
   // Terminal velocity = F * DAMPING / (1 - DAMPING).
-  // With DAMPING=0.88 and max spring F≈1 at typical stretch, term. v ≈ 7 px/tick.
-  // MAX_SPEED clamps explosions when many edges pile force onto one node.
-  const REPULSION  = 2000;   // node-node repulsion (1/d²)
-  const SPRING_K   = 0.008;  // edge spring — must be < 0.016 to stay stable at D=0.88
-  const SPRING_LEN = 80;     // rest length; springs only pull when d > this
-  const DAMPING    = 0.88;   // velocity retention per tick (higher = smoother)
-  const GRAVITY    = 0.001;  // weak center pull to keep graph on screen
+  // SPRING_K must satisfy: SPRING_K * max_stretch * D/(1-D) < MAX_SPEED.
+  // At D=0.88, max_stretch≈200: SPRING_K < 10*0.12/(200*0.88) ≈ 0.007. Use 0.006.
+  const REPULSION  = 6000;   // node-node repulsion (floored at minSep)
+  const SPRING_K   = 0.006;  // edge spring stiffness
+  const SPRING_LEN = 80;     // rest length; rubber band only pulls when d > this
+  const DAMPING    = 0.88;   // velocity retention per tick
+  const GRAVITY    = 0.001;  // weak center pull
   const NUDGE      = 0.03;   // tiny jitter so nodes don't fully freeze
-  const MIN_DIST   = 20;
-  const MAX_SPEED  = 10;     // px/tick velocity cap prevents runaway nodes
+  const MAX_SPEED  = 10;     // px/tick velocity cap
+  const PAD        = 14;     // minimum gap between node edges
 
-  const vel = {};
-  cy.nodes().forEach(n => { vel[n.id()] = { x: 0, y: 0 }; });
-
+  const vel     = {};
   const nodeArr = cy.nodes().toArray();
   const cnt     = nodeArr.length;
   const idxOf   = Object.fromEntries(nodeArr.map((n, i) => [n.id(), i]));
   const edgeArr = cy.edges().toArray();
+  // Collision radius = half the node's rendered width + padding gap
+  const nodeR   = nodeArr.map(n => n.width() / 2 + PAD);
+  cy.nodes().forEach(n => { vel[n.id()] = { x: 0, y: 0 }; });
 
   let raf;
   function tick() {
@@ -491,14 +492,16 @@ function startForce(cy) {
     const fx  = new Float64Array(cnt);
     const fy  = new Float64Array(cnt);
 
-    // Repulsion O(n²)
+    // Repulsion — floor effective distance at minSep so nodes never overlap
     for (let i = 0; i < cnt; i++) {
       const pi = nodeArr[i].position();
       for (let j = i + 1; j < cnt; j++) {
         const pj = nodeArr[j].position();
         const dx = pj.x - pi.x, dy = pj.y - pi.y;
-        const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
-        const f  = REPULSION / (d * d);
+        const d      = Math.max(Math.sqrt(dx*dx + dy*dy), 1);
+        const minSep = nodeR[i] + nodeR[j];
+        const effD   = Math.max(d, minSep);   // force can't weaken past what minSep gives
+        const f      = REPULSION / (effD * effD);
         const nx = f * dx / d, ny = f * dy / d;
         fx[i] -= nx; fy[i] -= ny;
         fx[j] += nx; fy[j] += ny;
@@ -512,7 +515,7 @@ function startForce(cy) {
       if (si == null || ti == null) continue;
       const ps = nodeArr[si].position(), pt = nodeArr[ti].position();
       const dx = pt.x - ps.x, dy = pt.y - ps.y;
-      const d  = Math.max(Math.sqrt(dx*dx + dy*dy), MIN_DIST);
+      const d  = Math.max(Math.sqrt(dx*dx + dy*dy), 1);
       const f  = Math.max(0, SPRING_K * (d - SPRING_LEN));
       const nx = f * dx / d, ny = f * dy / d;
       fx[si] += nx; fy[si] += ny;

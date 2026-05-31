@@ -41,6 +41,8 @@ flate2             = "1"
 tar                = "0.4"
 lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
 tower          = { version = "0.4", features = ["util"] }
+rmp-serde      = "1"
+docify         = { path = "../docify", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"

@@ -191,6 +191,7 @@ async function loadPackage(name, channel, selectedVersion) {
           ${latest.build_system ? `<span class="badge">${esc(latest.build_system)}</span>` : ''}
           ${totalDownloads ? `<span class="badge dl">↓ ${fmtNum(totalDownloads)} total</span>` : ''}
           ${kwHtml}
+          <a href="/packages/${esc(name)}/docs" class="badge" style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent)">API Docs</a>
         </div>
       </div>
 

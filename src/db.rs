@@ -1462,6 +1462,36 @@ impl Db {
         Ok(result.rows_affected() > 0)
     }
 
+    // ── Docs ───────────────────────────────────────────────────────────────────
+
+    /// Store (or replace) a msgpack docset blob for a package version.
+    pub async fn set_docs(&self, package_id: i64, version: &str, data: &[u8]) -> Result<()> {
+        sqlx::query(&self.q_sql(
+            "INSERT INTO docs (package_id, version, data) VALUES (?, ?, ?)
+             ON CONFLICT(package_id, version) DO UPDATE SET data = excluded.data, created_at = unixepoch()",
+        ))
+        .bind(package_id)
+        .bind(version)
+        .bind(data)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Retrieve the msgpack docset blob for a package version. Returns `None` if not uploaded.
+    pub async fn get_docs(&self, package_id: i64, version: &str) -> Result<Option<Vec<u8>>> {
+        let row: Option<(Vec<u8>,)> = sqlx::query_as(&self.q_sql(
+            "SELECT data FROM docs WHERE package_id = ? AND version = ?",
+        ))
+        .bind(package_id)
+        .bind(version)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(b,)| b))
+    }
+
+    // ── Auth-management ────────────────────────────────────────────────────────
+
     /// Check if a user can publish/modify a package (owns it directly or via org membership).
     pub async fn user_can_manage_package(&self, package_name: &str, channel: &str, user_id: i64) -> Result<bool> {
         // Direct ownership check (existing table).

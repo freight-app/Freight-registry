@@ -18,6 +18,7 @@ pub mod admin;
 pub mod audit;
 pub mod channels;
 pub mod delete;
+pub mod docs;
 pub mod download;
 pub mod email;
 pub mod health;
@@ -119,6 +120,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/graph",                                      get(packages::get_graph))
         .route("/api/v1/packages/:name",                             get(packages::get_package))
         .route("/api/v1/packages/:name/:version/readme",              get(readme::get_readme).put(readme::put_readme))
+        .route("/api/v1/packages/:name/:version/docs",                get(docs::get_docs).put(docs::put_docs))
         .route("/api/v1/search",                                     get(search::search_packages))
         .route("/api/v1/packages/:name/:version/download",           get(download::download))
         .route("/api/v1/packages/:name/:version/prebuilts",          get(prebuilt::list))
@@ -170,7 +172,8 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // /style.css, /app.js, etc. → served by ServeDir fallback
         .route("/",                get(|()| serve_page("index.html")))
         .route("/graph",           get(|()| serve_page("graph.html")))
-        .route("/packages/:_name", get(|()| serve_page("package.html")))
+        .route("/packages/:_name",      get(|()| serve_page("package.html")))
+        .route("/packages/:_name/docs", get(|()| serve_page("docs.html")))
         .route("/login",           get(|()| serve_page("login.html")))
         .route("/register",        get(|()| serve_page("register.html")))
         .route("/account",         get(|()| serve_page("account.html")))

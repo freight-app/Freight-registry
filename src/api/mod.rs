@@ -40,6 +40,7 @@ pub mod reset;
 pub mod search;
 pub mod stats;
 pub mod totp;
+pub mod user_profile;
 pub mod yank;
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -157,6 +158,8 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // OAuth / OIDC (provider name is part of the path: /auth/:provider)
         .route("/auth/:provider",          get(oauth::oauth_start))
         .route("/auth/:provider/callback", get(oauth::oauth_callback))
+        // Public user profiles
+        .route("/api/v1/users/:username",                  get(user_profile::get_user))
         // Email / password reset (no auth)
         .route("/api/v1/users/verify-email",               get(email::verify_email))
         .route("/api/v1/users/reset-password/request",     post(reset::request_reset))
@@ -171,6 +174,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/login",           get(|()| serve_page("login.html")))
         .route("/register",        get(|()| serve_page("register.html")))
         .route("/account",         get(|()| serve_page("account.html")))
+        .route("/users/:_name",    get(|()| serve_page("users.html")))
         .fallback_service({
             let dir = static_dir();
             ServeDir::new(&dir).fallback(tower::service_fn(|_req: axum::http::Request<axum::body::Body>| async {

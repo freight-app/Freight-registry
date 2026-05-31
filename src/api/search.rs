@@ -27,6 +27,9 @@ pub struct SearchParams {
     /// Sort order: "name" (default), "downloads", "newest"
     #[serde(default)]
     sort: Option<String>,
+    /// When `1`, treat `q` as an exact keyword match instead of a full-text search.
+    #[serde(default)]
+    keyword: Option<String>,
 }
 
 fn default_limit() -> i64 { 20 }
@@ -55,7 +58,12 @@ pub async fn search_packages(
     // Use the first channel as the representative for per-result URLs / mirror queries.
     let primary_channel = channels.first().copied().unwrap_or(DEFAULT_CHANNEL);
 
-    let (results, total) = state.db.search_packages(query, &channels, limit, offset, sort).await?;
+    let keyword_only = params.keyword.as_deref() == Some("1");
+    let (results, total) = if keyword_only {
+        state.db.search_packages_by_keyword(query, &channels, limit, offset, sort).await?
+    } else {
+        state.db.search_packages(query, &channels, limit, offset, sort).await?
+    };
 
     let mut local_names = std::collections::HashSet::new();
     let mut packages: Vec<Value> = results

@@ -107,8 +107,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('hero-q').value = q;
     document.getElementById('nav-q').value  = q;
     showFilters();
-    performSearch(q, 0);
-    document.getElementById('hero').style.display = 'none';
+    const parsed = parseQuery(q);
+    if (parsed.type === 'user') {
+      location.href = `/users/${encodeURIComponent(parsed.value)}`;
+    } else {
+      performSearch(q, 0);
+      document.getElementById('hero').style.display = 'none';
+    }
   } else {
     // No query: show featured / recent packages
     showFilters();
@@ -125,26 +130,36 @@ function showFilters() {
 // ── Search ─────────────────────────────────────────────────────────────────
 
 function doSearch() {
-  const q = (document.getElementById('hero-q').value
-          || document.getElementById('nav-q').value || '').trim();
-  if (!q) return;
-  history.pushState({}, '', `/?q=${encodeURIComponent(q)}`);
+  const raw = (document.getElementById('hero-q').value
+            || document.getElementById('nav-q').value || '').trim();
+  if (!raw) return;
+  const { type, value } = parseQuery(raw);
+  if (type === 'user') {
+    location.href = `/users/${encodeURIComponent(value)}`;
+    return;
+  }
+  history.pushState({}, '', `/?q=${encodeURIComponent(raw)}`);
   document.getElementById('hero').style.display = 'none';
   showFilters();
-  performSearch(q, 0);
+  performSearch(raw, 0);
 }
 
-async function performSearch(q, offset) {
-  currentQuery = q;
+async function performSearch(raw, offset) {
+  const { type, value } = parseQuery(raw);
+  currentQuery = raw;
   currentPage  = Math.floor(offset / PAGE_SIZE);
   const el = document.getElementById('results');
   setLoading(el);
   document.getElementById('pagination').innerHTML = '';
-  // Hide keyword cloud while searching
   document.getElementById('kw-cloud').innerHTML = '';
   try {
     const opts = { limit: PAGE_SIZE, offset, sort: currentSort };
-    const data = await API.search(q, opts);
+    let data;
+    if (type === 'keyword') {
+      data = await API.searchByKeyword(value, opts);
+    } else {
+      data = await API.search(value, opts);
+    }
     totalResults = data.total ?? data.packages.length;
     renderPackageCards(data.packages, el);
     renderPagination();

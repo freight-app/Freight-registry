@@ -18,6 +18,17 @@ const API = {
     return r.json();   // { packages: [...], total: N, limit, offset }
   },
 
+  /** GET /api/v1/search?q=&keyword=1 — exact keyword filter */
+  async searchByKeyword(keyword, { limit = 20, offset = 0, channels = null, sort = '' } = {}) {
+    let url = `/api/v1/search?q=${encodeURIComponent(keyword)}&keyword=1&limit=${limit}&offset=${offset}`;
+    const ch = channels ?? Settings.enabledChannels();
+    if (ch.length > 0) url += `&channels=${encodeURIComponent(ch.join(','))}`;
+    if (sort) url += `&sort=${encodeURIComponent(sort)}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Search failed: ${r.status}`);
+    return r.json();
+  },
+
   /** GET /api/v1/packages/:name?channel= */
   async getPackage(name, channel) {
     let url = `/api/v1/packages/${encodeURIComponent(name)}`;
@@ -122,7 +133,7 @@ function renderPackageCards(packages, el) {
   }
   const cards = packages.map(pkg => {
     const kws = (pkg.keywords || []).slice(0, 4)
-      .map(k => `<a href="/?q=${encodeURIComponent(k)}" class="badge keyword" onclick="event.stopPropagation()">${esc(k)}</a>`).join('');
+      .map(k => `<a href="/?q=${encodeURIComponent('#' + k)}" class="badge keyword" onclick="event.stopPropagation()">#${esc(k)}</a>`).join('');
     const dl  = pkg.versions?.[0]?.downloads || pkg.downloads || 0;
     const bs  = pkg.build_system || pkg.versions?.[0]?.build_system;
     const lang = buildLabel(bs);
@@ -218,6 +229,29 @@ document.addEventListener('click', e => {
   });
 });
 
+// ── Search query parsing ───────────────────────────────────────────────────
+
+/**
+ * Parse a raw search query and return a routing decision.
+ *   #keyword  → { type: 'keyword', value: 'keyword' }
+ *   @user     → { type: 'user',    value: 'user' }
+ *   anything  → { type: 'text',    value: raw }
+ */
+function parseQuery(raw) {
+  const s = raw.trim();
+  if (s.startsWith('#') && s.length > 1) return { type: 'keyword', value: s.slice(1).trim() };
+  if (s.startsWith('@') && s.length > 1) return { type: 'user',    value: s.slice(1).trim() };
+  return { type: 'text', value: s };
+}
+
+/** Build the URL for a given query (respects #/@ prefixes). */
+function searchUrl(raw) {
+  const { type, value } = parseQuery(raw);
+  if (type === 'user')    return `/users/${encodeURIComponent(value)}`;
+  if (type === 'keyword') return `/?q=${encodeURIComponent('#' + value)}`;
+  return `/?q=${encodeURIComponent(value)}`;
+}
+
 // ── Nav search — redirect to search page on Enter ─────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -225,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (navInput) {
     navInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && navInput.value.trim()) {
-        location.href = `/?q=${encodeURIComponent(navInput.value.trim())}`;
+        location.href = searchUrl(navInput.value);
       }
     });
   }
@@ -260,7 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function renderKeywordCloud(kws, el) {
   if (!kws || kws.length === 0) { el.innerHTML = ''; return; }
   const tags = kws.map(k =>
-    `<a class="kw-tag" href="/?q=${encodeURIComponent(k.name)}">${esc(k.name)}<span class="kw-count">${fmtNum(k.count)}</span></a>`
+    `<a class="kw-tag" href="/?q=${encodeURIComponent('#' + k.name)}">#${esc(k.name)}<span class="kw-count">${fmtNum(k.count)}</span></a>`
   ).join('');
   el.innerHTML = `<div class="kw-cloud"><h2>Browse by category</h2><div class="kw-tags">${tags}</div></div>`;
 }

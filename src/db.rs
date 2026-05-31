@@ -726,10 +726,37 @@ impl Db {
         offset: i64,
         sort: &str,
     ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
+        self.search_packages_inner(query, channels, limit, offset, sort, false).await
+    }
+
+    pub async fn search_packages_by_keyword(
+        &self,
+        keyword: &str,
+        channels: &[&str],
+        limit: i64,
+        offset: i64,
+        sort: &str,
+    ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
+        self.search_packages_inner(keyword, channels, limit, offset, sort, true).await
+    }
+
+    async fn search_packages_inner(
+        &self,
+        query: &str,
+        channels: &[&str],
+        limit: i64,
+        offset: i64,
+        sort: &str,
+        keyword_only: bool,
+    ) -> Result<(Vec<(PackageRow, Option<VersionRow>)>, i64)> {
         if channels.is_empty() {
             return Ok((vec![], 0));
         }
         let pattern = format!("%{query}%");
+        // For keyword-only mode, match the keyword exactly within the comma-separated list.
+        // Handles: "kw", "kw,other", "other,kw", "a,kw,b"
+        let kw_pattern = format!("%(,|^){query}(,|$)%");
+        let _ = &kw_pattern; // used conditionally below via format!
 
         let ch_placeholders = channels.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let ch_filter = if channels.len() == 1 {
@@ -738,15 +765,32 @@ impl Db {
             format!("channel IN ({ch_placeholders})")
         };
 
+        let text_filter = if keyword_only {
+            // Match keyword exactly: "kw" or "kw,..." or "...,kw" or "...,kw,..."
+            format!(
+                "(lower(keywords) = lower(?) OR lower(keywords) LIKE lower(?) \
+                 OR lower(keywords) LIKE lower(?) OR lower(keywords) LIKE lower(?))"
+            )
+        } else {
+            format!("(lower(name) LIKE lower(?) OR lower(keywords) LIKE lower(?))")
+        };
+
         let count_sql = self.q_sql(&format!(
             "SELECT COUNT(*) FROM packages
-             WHERE (lower(name) LIKE lower(?) OR lower(keywords) LIKE lower(?))
+             WHERE {text_filter}
                AND {ch_filter}
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = id)"
         ));
-        let mut count_q = sqlx::query_scalar(&count_sql)
-            .bind(&pattern)
-            .bind(&pattern);
+        let mut count_q = sqlx::query_scalar(&count_sql);
+        if keyword_only {
+            let exact  = query.to_lowercase();
+            let starts = format!("{exact},%");
+            let ends   = format!("%,{exact}");
+            let mid    = format!("%,{exact},%");
+            count_q = count_q.bind(exact).bind(starts).bind(ends).bind(mid);
+        } else {
+            count_q = count_q.bind(&pattern).bind(&pattern);
+        }
         for ch in channels { count_q = count_q.bind(ch.to_string()); }
         let total: i64 = count_q.fetch_one(&self.pool).await?;
 
@@ -767,14 +811,21 @@ impl Db {
                      (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
                       ORDER BY created_at DESC LIMIT 1))
                AND v.yanked = 0
-             WHERE (lower(p.name) LIKE lower(?) OR lower(p.keywords) LIKE lower(?))
+             WHERE {text_filter}
                AND {ch_filter}
                AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
              ORDER BY {order} LIMIT ? OFFSET ?"
         ));
-        let mut rows_q = sqlx::query(&sql)
-            .bind(&pattern)
-            .bind(&pattern);
+        let mut rows_q = sqlx::query(&sql);
+        if keyword_only {
+            let exact  = query.to_lowercase();
+            let starts = format!("{exact},%");
+            let ends   = format!("%,{exact}");
+            let mid    = format!("%,{exact},%");
+            rows_q = rows_q.bind(exact).bind(starts).bind(ends).bind(mid);
+        } else {
+            rows_q = rows_q.bind(&pattern).bind(&pattern);
+        }
         for ch in channels { rows_q = rows_q.bind(ch.to_string()); }
         let rows = rows_q
             .bind(limit)

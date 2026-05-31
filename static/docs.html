@@ -6,6 +6,7 @@
   <title>Docs — Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
   <style>
     body { flex-direction: column; }
 
@@ -350,6 +351,10 @@
     }
     .param-table .col-desc { color: var(--text); }
 
+    /* highlight.js integration — use our background, not hljs's */
+    .fn-sig .hljs { background: transparent !important; padding: 0 !important; }
+    .fn-sig pre   { margin: 0; }
+
     /* Source link */
     .fn-srclink {
       font-size: 11.5px;
@@ -418,6 +423,7 @@
 </div>
 
 <script src="/app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script>
 'use strict';
 
@@ -440,6 +446,31 @@ const KIND_LONG = {
 const TYPE_KINDS  = new Set(['class','struct','iface','enum','type']);
 const SPACE_KINDS = new Set(['mod']);
 const FN_KINDS    = new Set(['fn','sub','macro']);
+
+// docify lang enum variant → highlight.js language name
+const HLJS_LANG = {
+  C:'c', Cpp:'cpp', Rust:'rust', Fortran:'fortran',
+  D:'d', Ada:'ada', Java:'java', Go:'go',
+  Kotlin:'kotlin', Swift:'swift', Zig:'plaintext',
+};
+
+// Pretty display name for each lang variant
+const LANG_DISPLAY = {
+  C:'C', Cpp:'C++', Rust:'Rust', Fortran:'Fortran',
+  D:'D', Ada:'Ada', Java:'Java', Go:'Go',
+  Kotlin:'Kotlin', Swift:'Swift', Zig:'Zig',
+};
+
+function hlCode(code, langVariant) {
+  if (!code) return '';
+  if (typeof hljs === 'undefined') return esc(code);
+  const lang = HLJS_LANG[langVariant] ?? 'plaintext';
+  try {
+    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+  } catch {
+    return esc(code);
+  }
+}
 
 let allItems = [];
 let pkgInfo  = null;
@@ -718,7 +749,7 @@ function navClass(className) {
   <div class="dox-page-title">
     <span class="dox-kind-chip">${esc(KIND_LONG[classItem?.kind] ?? 'Class')}</span>
     <h2>${esc(className)}</h2>
-    ${classItem?.lang ? `<span class="dox-page-lang">${esc(classItem.lang)}</span>` : ''}
+    ${classItem?.lang ? `<span class="dox-page-lang">${esc(LANG_DISPLAY[classItem.lang] ?? classItem.lang)}</span>` : ''}
   </div>
   ${classItem?.brief ? `<p class="dox-page-brief">${esc(classItem.brief)}</p>` : ''}`;
 
@@ -852,7 +883,7 @@ function navSymbol(item) {
   <div class="dox-page-title">
     <span class="dox-kind-chip">${esc(KIND_LONG[item.kind] ?? item.kind)}</span>
     <h2>${esc(item.name)}</h2>
-    ${item.lang ? `<span class="dox-page-lang">${esc(item.lang)}</span>` : ''}
+    ${item.lang ? `<span class="dox-page-lang">${esc(LANG_DISPLAY[item.lang] ?? item.lang)}</span>` : ''}
   </div>`;
 
   html += fnDetail(item, null);
@@ -903,7 +934,7 @@ function fnDetail(item, overloadLabel) {
 
   if (depr) html += callout('depr', '🚫', `Deprecated: ${depr.text}`);
 
-  if (item.signature) html += `<div class="fn-sig">${esc(item.signature)}</div>`;
+  if (item.signature) html += `<div class="fn-sig">${hlCode(item.signature, item.lang)}</div>`;
   if (item.brief)     html += `<p class="fn-brief">${esc(item.brief)}</p>`;
   if (item.body)      html += `<div class="fn-body">${esc(item.body)}</div>`;
 
@@ -922,7 +953,7 @@ function fnDetail(item, overloadLabel) {
   for (const ex of examples) {
     if (ex.text) {
       html += `<div class="param-sec"><div class="param-title">Example</div>
-        <div class="fn-sig" style="margin-top:4px">${esc(ex.text)}</div></div>`;
+        <div class="fn-sig" style="margin-top:4px">${hlCode(ex.text, item.lang)}</div></div>`;
     }
   }
 

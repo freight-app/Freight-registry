@@ -29,7 +29,6 @@ pub async fn put_docs(
     docify::from_msgpack(&body)
         .map_err(|_| ApiError::bad_request("invalid msgpack — expected docify dump output"))?;
 
-    // Resolve the package (stable channel; the channel is inferred from the package name).
     let (pkg, _versions) = state.db.get_package(&name, DEFAULT_CHANNEL).await?
         .ok_or_else(|| ApiError::not_found(format!("package `{name}` not found")))?;
 
@@ -37,7 +36,9 @@ pub async fn put_docs(
         return Err(ApiError::forbidden("you do not own this package"));
     }
 
-    state.db.set_docs(pkg.id, &version, &body).await?;
+    state.storage.save_docs(&name, &version, &body).await
+        .map_err(|e| ApiError::internal(format!("storage error: {e}")))?;
+
     state.db.audit(Some(auth.user.id), "upload_docs", Some(&name), Some(&version), None);
 
     Ok(Json(json!({ "ok": true })))
@@ -51,44 +52,34 @@ pub async fn get_docs(
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let pkg = match state.db.get_package(&name, DEFAULT_CHANNEL).await {
-        Ok(Some((p, _))) => p,
-        Ok(None) => return (
-            StatusCode::NOT_FOUND,
-            [(header::CONTENT_TYPE, "application/json")],
-            b"{\"errors\":[{\"detail\":\"package not found\"}]}".to_vec(),
-        ).into_response(),
-        Err(e) => {
-            tracing::error!("{e:#}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, [(header::CONTENT_TYPE, "application/json")],
-                b"{\"errors\":[{\"detail\":\"internal error\"}]}".to_vec()).into_response();
+    // Resolve "latest" alias
+    let resolved_version = if version == "latest" {
+        match state.db.get_package(&name, DEFAULT_CHANNEL).await {
+            Ok(Some((pkg, _))) => pkg.latest_version.unwrap_or(version),
+            _ => version,
         }
+    } else {
+        version
     };
 
-    let blob = match state.db.get_docs(pkg.id, &version).await {
-        Ok(Some(b)) => b,
-        Ok(None) => return (
+    let blob = match state.storage.read_docs(&name, &resolved_version).await {
+        Some(b) => b,
+        None => return (
             StatusCode::NOT_FOUND,
             [(header::CONTENT_TYPE, "application/json")],
             b"{\"errors\":[{\"detail\":\"no docs for this version\"}]}".to_vec(),
         ).into_response(),
-        Err(e) => {
-            tracing::error!("{e:#}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, [(header::CONTENT_TYPE, "application/json")],
-                b"{\"errors\":[{\"detail\":\"internal error\"}]}".to_vec()).into_response();
-        }
     };
 
     let items: Vec<docify::DocItem> = match docify::from_msgpack(&blob) {
         Ok(i) => i,
         Err(e) => {
-            tracing::error!("docs msgpack decode failed for {name}/{version}: {e}");
+            tracing::error!("docs msgpack decode failed for {name}/{resolved_version}: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, [(header::CONTENT_TYPE, "application/json")],
                 b"{\"errors\":[{\"detail\":\"docs data corrupt\"}]}".to_vec()).into_response();
         }
     };
 
-    // Transcode to JSON for web consumption.
     let json_items: Vec<Value> = items.iter().map(|item| {
         let tags: Vec<Value> = item.tags.iter().map(|t| json!({
             "kind":  format!("{:?}", t.kind),

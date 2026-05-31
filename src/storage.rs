@@ -233,6 +233,45 @@ impl Storage {
         String::from_utf8(bytes).ok()
     }
 
+    /// Store the docify msgpack blob for a specific package version.
+    pub async fn save_docs(&self, name: &str, version: &str, data: &[u8]) -> Result<()> {
+        match &self.backend {
+            Backend::Local(root) => {
+                let path = root.join(name).join(version).join("docs.msgpack");
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::write(path, data).await?;
+            }
+            Backend::S3(store) => {
+                store
+                    .put(&ObjPath::from(format!("{name}/{version}/docs.msgpack")), data.to_vec().into())
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the docify msgpack blob for a specific package version.
+    /// Returns `None` if not present.
+    pub async fn read_docs(&self, name: &str, version: &str) -> Option<Vec<u8>> {
+        match &self.backend {
+            Backend::Local(root) => {
+                tokio::fs::read(root.join(name).join(version).join("docs.msgpack")).await.ok()
+            }
+            Backend::S3(store) => {
+                store
+                    .get(&ObjPath::from(format!("{name}/{version}/docs.msgpack")))
+                    .await
+                    .ok()?
+                    .bytes()
+                    .await
+                    .ok()
+                    .map(|b| b.to_vec())
+            }
+        }
+    }
+
     /// Remove all stored tarballs for a package. Silently succeeds if none exist.
     pub async fn delete_package_dir(&self, name: &str) -> Result<()> {
         match &self.backend {

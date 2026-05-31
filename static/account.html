@@ -51,27 +51,24 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
   const session = Auth.session();
-  if (!session) {
-    location.href = '/login?next=/account';
-    return;
-  }
+  if (!session) { location.href = '/login?next=/account'; return; }
 
   const main = document.getElementById('main');
 
   try {
-    const [me, tokens] = await Promise.all([
+    const [me, tokens, pkgsData] = await Promise.all([
       apiFetch('/api/v1/me'),
       apiFetch('/api/v1/me/tokens'),
+      apiFetch('/api/v1/me/packages'),
     ]);
 
     if (!me) { Auth.clear(); location.href = '/login'; return; }
 
     document.title = `${me.login} — Freight Registry`;
 
-    const expiresIn = me.token_expires_in;
-    const expiresStr = expiresIn == null
-      ? 'never'
-      : `in ${Math.ceil(expiresIn / 86400)}d`;
+    const expiresIn  = me.token_expires_in;
+    const expiresStr = expiresIn == null ? 'never' : `in ${Math.ceil(expiresIn / 86400)}d`;
+    const isOAuth    = me.login && !me.email && !me.totp_enabled; // heuristic; refined below
 
     main.innerHTML = `
       <div class="account-grid">
@@ -85,6 +82,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <span class="label">Username</span>
                 <strong>${esc(me.login)}</strong>
               </li>
+              ${me.email ? `<li>
+                <span class="label">Email</span>
+                <span style="font-size:13px">${esc(me.email)}${me.email_verified ? '' : ' <span style="color:var(--muted)">(unverified)</span>'}</span>
+              </li>` : ''}
               ${me.is_admin ? `<li>
                 <span class="label">Role</span>
                 <span class="badge" style="border-color:#7c3aed;color:#a78bfa">admin</span>
@@ -98,6 +99,35 @@ document.addEventListener('DOMContentLoaded', async () => {
               <button class="btn-danger" id="logout-btn">Sign out</button>
             </div>
           </div>
+        </div>
+
+        <!-- ── My Packages ── -->
+        <div class="account-section">
+          <h2>My packages</h2>
+          <div id="my-packages-list"></div>
+        </div>
+
+        <!-- ── Password ── -->
+        <div class="account-section" id="pw-section">
+          <h2>Change password</h2>
+          <div class="sidebar-box" style="max-width:420px">
+            <form id="pw-form">
+              <label class="field-label" for="pw-cur">Current password</label>
+              <input id="pw-cur" type="password" autocomplete="current-password" required>
+              <label class="field-label" for="pw-new">New password</label>
+              <input id="pw-new" type="password" autocomplete="new-password" required minlength="8">
+              <label class="field-label" for="pw-new2">Confirm new password</label>
+              <input id="pw-new2" type="password" autocomplete="new-password" required>
+              <button type="submit" class="btn-primary" id="pw-btn" style="margin-top:8px">Change password</button>
+            </form>
+            <div id="pw-msg" style="margin-top:8px"></div>
+          </div>
+        </div>
+
+        <!-- ── Two-factor auth ── -->
+        <div class="account-section">
+          <h2>Two-factor authentication</h2>
+          <div id="totp-section"></div>
         </div>
 
         <!-- ── API Tokens ── -->
@@ -114,17 +144,14 @@ document.addEventListener('DOMContentLoaded', async () => {
               <form id="new-token-form">
                 <label class="field-label" for="t-name">Token name</label>
                 <input id="t-name" type="text" placeholder="e.g. ci-publish" required maxlength="64">
-
                 <label class="field-label" for="t-scope">Scope</label>
                 <select id="t-scope">
                   <option value="publish">publish</option>
                   <option value="read">read</option>
                   <option value="admin">admin</option>
                 </select>
-
                 <label class="field-label" for="t-expires">Expires in (days, blank = never)</label>
                 <input id="t-expires" type="number" min="1" max="365" placeholder="90">
-
                 <button type="submit" class="btn-primary" id="t-btn" style="margin-top:8px">Create</button>
               </form>
               <div id="new-token-result" style="margin-top:12px"></div>
@@ -134,17 +161,212 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       </div>`;
 
+    renderMyPackages(pkgsData?.packages ?? []);
     renderTokens(tokens?.tokens ?? []);
+    renderTotp(me.totp_enabled);
+
     document.getElementById('logout-btn').addEventListener('click', () => {
-      Auth.clear();
-      location.href = '/';
+      Auth.clear(); location.href = '/';
     });
     document.getElementById('new-token-form').addEventListener('submit', createToken);
+    document.getElementById('pw-form').addEventListener('submit', changePassword);
+
+    // Hide password section for OAuth accounts (password_hash starts with !oauth:)
+    // We detect this by the server returning a specific error when trying — simpler:
+    // just always show it; the server will reject with a clear message if OAuth.
 
   } catch (err) {
     main.innerHTML = `<div class="error">Failed to load account: ${esc(err.message)}</div>`;
   }
 });
+
+// ── My packages ────────────────────────────────────────────────────────────
+
+function renderMyPackages(pkgs) {
+  const el = document.getElementById('my-packages-list');
+  if (!el) return;
+  if (pkgs.length === 0) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px">No packages published yet.</p>';
+    return;
+  }
+  el.innerHTML = `<table style="max-width:640px">
+    <thead><tr><th>Name</th><th>Channel</th><th>Version</th><th>License</th></tr></thead>
+    <tbody>
+      ${pkgs.map(p => `
+        <tr>
+          <td><a href="/packages/${encodeURIComponent(p.name)}${p.channel !== 'stable' ? `?channel=${encodeURIComponent(p.channel)}` : ''}">${esc(p.name)}</a></td>
+          <td><span class="badge">${esc(p.channel)}</span></td>
+          <td style="color:var(--muted);font-size:13px">${p.version ? esc(p.version) : '—'}</td>
+          <td style="color:var(--muted);font-size:13px">${p.license ? esc(p.license) : '—'}</td>
+        </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+// ── Change password ────────────────────────────────────────────────────────
+
+async function changePassword(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('pw-btn');
+  const cur  = document.getElementById('pw-cur').value;
+  const nw   = document.getElementById('pw-new').value;
+  const nw2  = document.getElementById('pw-new2').value;
+  const msg  = document.getElementById('pw-msg');
+
+  if (nw !== nw2) { msg.innerHTML = '<div class="msg-err">New passwords do not match.</div>'; return; }
+  if (nw.length < 8) { msg.innerHTML = '<div class="msg-err">Password must be at least 8 characters.</div>'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  msg.innerHTML = '';
+
+  try {
+    const r = await fetch('/api/v1/me/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': Auth.bearer() },
+      body: JSON.stringify({
+        current_password: await sha256hex(cur),
+        new_password:     await sha256hex(nw),
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = `<div class="msg-err">${esc(data.errors?.[0]?.detail ?? `Error ${r.status}`)}</div>`;
+    } else {
+      msg.innerHTML = '<div class="msg-ok">Password changed.</div>';
+      document.getElementById('pw-form').reset();
+    }
+  } catch {
+    msg.innerHTML = '<div class="msg-err">Network error.</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Change password';
+  }
+}
+
+// ── TOTP ───────────────────────────────────────────────────────────────────
+
+function renderTotp(enabled) {
+  const el = document.getElementById('totp-section');
+  if (!el) return;
+  if (enabled) {
+    el.innerHTML = `
+      <div class="sidebar-box" style="max-width:420px">
+        <p style="font-size:13px;margin:0 0 12px">
+          <span style="color:#3fb950">✓ Enabled</span> — your account requires a code from your authenticator app at sign-in.
+        </p>
+        <form id="totp-disable-form">
+          <label class="field-label" for="td-code">Authenticator code to confirm disable</label>
+          <input id="td-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+          <button type="submit" class="btn-danger" id="td-btn" style="margin-top:8px">Disable 2FA</button>
+        </form>
+        <div id="totp-msg" style="margin-top:8px"></div>
+      </div>`;
+    document.getElementById('totp-disable-form').addEventListener('submit', disableTotp);
+  } else {
+    el.innerHTML = `
+      <div class="sidebar-box" style="max-width:420px">
+        <p style="color:var(--muted);font-size:13px;margin:0 0 12px">
+          Two-factor authentication is not enabled. Add an extra layer of security to your account.
+        </p>
+        <button class="btn-primary" id="totp-enroll-btn">Set up 2FA</button>
+        <div id="totp-enroll-area" style="margin-top:16px"></div>
+        <div id="totp-msg" style="margin-top:8px"></div>
+      </div>`;
+    document.getElementById('totp-enroll-btn').addEventListener('click', startTotpEnroll);
+  }
+}
+
+async function startTotpEnroll() {
+  const area = document.getElementById('totp-enroll-area');
+  const msg  = document.getElementById('totp-msg');
+  document.getElementById('totp-enroll-btn').style.display = 'none';
+  area.innerHTML = '<div class="spinner" style="margin:8px 0"></div>';
+  try {
+    const r = await fetch('/api/v1/me/totp/enroll', {
+      method: 'POST',
+      headers: { 'Authorization': Auth.bearer() },
+    });
+    const data = await r.json();
+    if (!r.ok) { msg.innerHTML = `<div class="msg-err">${esc(data.errors?.[0]?.detail ?? 'Enroll failed')}</div>`; area.innerHTML = ''; return; }
+
+    area.innerHTML = `
+      <p style="font-size:13px;color:var(--muted);margin:0 0 8px">
+        Open your authenticator app (Google Authenticator, Authy, etc.) and add a new account using the key below.
+      </p>
+      <label class="field-label">Secret key</label>
+      <div class="install-box" style="margin:0 0 12px">
+        <code id="totp-secret-val">${esc(data.secret)}</code>
+        <button class="copy-btn" data-copy="${esc(data.secret)}">Copy</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 12px">
+        Or paste this URI into your app: <br>
+        <code style="font-size:11px;word-break:break-all">${esc(data.uri)}</code>
+      </p>
+      <form id="totp-confirm-form">
+        <label class="field-label" for="tc-code">Enter the 6-digit code to confirm</label>
+        <input id="tc-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+        <button type="submit" class="btn-primary" id="tc-btn" style="margin-top:8px">Activate 2FA</button>
+      </form>`;
+    document.getElementById('totp-confirm-form').addEventListener('submit', confirmTotpEnroll);
+  } catch {
+    msg.innerHTML = '<div class="msg-err">Network error.</div>';
+    area.innerHTML = '';
+    document.getElementById('totp-enroll-btn').style.display = '';
+  }
+}
+
+async function confirmTotpEnroll(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('tc-btn');
+  const code = document.getElementById('tc-code').value.trim();
+  const msg  = document.getElementById('totp-msg');
+  btn.disabled = true; btn.textContent = 'Activating…';
+  try {
+    const r = await fetch('/api/v1/me/totp/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': Auth.bearer() },
+      body: JSON.stringify({ code }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = `<div class="msg-err">${esc(data.errors?.[0]?.detail ?? 'Invalid code')}</div>`;
+    } else {
+      msg.innerHTML = '<div class="msg-ok">2FA enabled successfully.</div>';
+      renderTotp(true);
+    }
+  } catch {
+    msg.innerHTML = '<div class="msg-err">Network error.</div>';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Activate 2FA';
+  }
+}
+
+async function disableTotp(e) {
+  e.preventDefault();
+  const btn  = document.getElementById('td-btn');
+  const code = document.getElementById('td-code').value.trim();
+  const msg  = document.getElementById('totp-msg');
+  btn.disabled = true; btn.textContent = 'Disabling…';
+  try {
+    const r = await fetch('/api/v1/me/totp', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'Authorization': Auth.bearer() },
+      body: JSON.stringify({ code }),
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      msg.innerHTML = `<div class="msg-err">${esc(data.errors?.[0]?.detail ?? 'Invalid code')}</div>`;
+    } else {
+      msg.innerHTML = '<div class="msg-ok">2FA disabled.</div>';
+      renderTotp(false);
+    }
+  } catch {
+    msg.innerHTML = '<div class="msg-err">Network error.</div>';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Disable 2FA';
+  }
+}
 
 // ── Token list ─────────────────────────────────────────────────────────────
 
@@ -156,18 +378,14 @@ function renderTokens(tokens) {
     return;
   }
   el.innerHTML = `<table style="max-width:560px">
-    <thead><tr>
-      <th>Name</th><th>Scope</th><th>Expires</th><th></th>
-    </tr></thead>
+    <thead><tr><th>Name</th><th>Scope</th><th>Expires</th><th></th></tr></thead>
     <tbody>
       ${tokens.map(t => `
         <tr>
           <td style="font-family:var(--font-mono);font-size:13px">${esc(t.name)}</td>
           <td><span class="badge">${esc(t.scope)}</span></td>
           <td style="color:var(--muted);font-size:12px">${t.expires_at ? fmtDate(t.expires_at) : '—'}</td>
-          <td>
-            <button class="btn-danger btn-sm" onclick="revokeToken('${esc(t.name)}')">Revoke</button>
-          </td>
+          <td><button class="btn-danger btn-sm" onclick="revokeToken('${esc(t.name)}')">Revoke</button></td>
         </tr>`).join('')}
     </tbody>
   </table>`;
@@ -186,22 +404,18 @@ async function revokeToken(name) {
 
 async function createToken(e) {
   e.preventDefault();
-  const btn     = document.getElementById('t-btn');
-  const name    = document.getElementById('t-name').value.trim();
-  const scope   = document.getElementById('t-scope').value;
-  const days    = parseInt(document.getElementById('t-expires').value, 10) || null;
+  const btn   = document.getElementById('t-btn');
+  const name  = document.getElementById('t-name').value.trim();
+  const scope = document.getElementById('t-scope').value;
+  const days  = parseInt(document.getElementById('t-expires').value, 10) || null;
   if (!name) return;
 
-  btn.disabled = true;
-  btn.textContent = 'Creating…';
+  btn.disabled = true; btn.textContent = 'Creating…';
 
   try {
     const r = await fetch('/api/v1/me/tokens', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': Auth.bearer(),
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': Auth.bearer() },
       body: JSON.stringify({ name, scope, expires_days: days }),
     });
     const data = await r.json();
@@ -212,22 +426,26 @@ async function createToken(e) {
       res.innerHTML = `
         <p style="font-size:13px;color:var(--muted);margin:0 0 6px">Copy this token now — it won't be shown again.</p>
         <div class="install-box" style="margin:0">
-          <code id="new-token-val">${esc(data.token)}</code>
+          <code>${esc(data.token)}</code>
           <button class="copy-btn" data-copy="${esc(data.token)}">Copy</button>
         </div>`;
       const tokens = await apiFetch('/api/v1/me/tokens');
       renderTokens(tokens?.tokens ?? []);
     }
   } catch {
-    document.getElementById('new-token-result').innerHTML =
-      '<div class="msg-err">Network error.</div>';
+    document.getElementById('new-token-result').innerHTML = '<div class="msg-err">Network error.</div>';
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Create';
+    btn.disabled = false; btn.textContent = 'Create';
   }
 }
 
-// ── Fetch helper with auth ─────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+async function sha256hex(str) {
+  const buf  = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
 async function apiFetch(url, opts = {}) {
   const bearer = Auth.bearer();
@@ -237,7 +455,7 @@ async function apiFetch(url, opts = {}) {
     headers: { 'Authorization': bearer, ...(opts.headers ?? {}) },
   });
   if (r.status === 401) { Auth.clear(); location.href = '/login'; return null; }
-  if (r.status === 204 || r.status === 200 && r.headers.get('content-length') === '0') return {};
+  if (r.status === 204 || (r.status === 200 && r.headers.get('content-length') === '0')) return {};
   return r.json().catch(() => ({}));
 }
 </script>

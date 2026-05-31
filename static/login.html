@@ -55,6 +55,21 @@
     </div>
   </div>
 
+  <!-- TOTP challenge (hidden until server demands it) -->
+  <div id="form-totp" class="auth-card" style="display:none">
+    <h2>Two-factor authentication</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+      Enter the 6-digit code from your authenticator app.
+    </p>
+    <form id="totp-form">
+      <label class="field-label" for="t-code">Authenticator code</label>
+      <input id="t-code" type="text" inputmode="numeric" pattern="[0-9]{6}"
+             autocomplete="one-time-code" placeholder="000000" maxlength="6" required>
+      <button type="submit" class="btn-primary" id="t-btn">Verify</button>
+    </form>
+    <div class="auth-footer"><a href="#" id="back-from-totp">← Use a different account</a></div>
+  </div>
+
   <!-- Forgot-password form (hidden by default) -->
   <div id="form-forgot" class="auth-card" style="display:none">
     <h2>Reset password</h2>
@@ -88,6 +103,19 @@ if (params.get('registered') === '1') {
 
 // ── Login ──────────────────────────────────────────────────────────────────
 
+let pendingLogin = null; // { username, password } saved while waiting for TOTP
+
+async function doLogin(username, password, totpCode) {
+  const body = { username, password };
+  if (totpCode) body.totp_code = totpCode;
+  const r = await fetch('/api/v1/users/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { r, data: await r.json() };
+}
+
 document.getElementById('login-form').addEventListener('submit', async e => {
   e.preventDefault();
   const btn  = document.getElementById('l-btn');
@@ -100,26 +128,65 @@ document.getElementById('login-form').addEventListener('submit', async e => {
   clearMsg();
 
   try {
-    const r = await fetch('/api/v1/users/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user, password: pass }),
-    });
-    const data = await r.json();
+    const { r, data } = await doLogin(user, pass);
     if (!r.ok) {
-      showErr(data.errors?.[0]?.detail ?? `Error ${r.status}`);
+      const detail = data.errors?.[0]?.detail ?? `Error ${r.status}`;
+      if (detail === 'TOTP code required') {
+        // Show TOTP challenge step
+        pendingLogin = { username: user, password: pass };
+        document.getElementById('form-login').style.display = 'none';
+        document.getElementById('form-totp').style.display  = '';
+        document.getElementById('t-code').focus();
+        return;
+      }
+      showErr(detail);
       return;
     }
     Auth.save(data.token, data.refresh_token, user, false);
-    // Redirect to account or the page they came from
-    const next = params.get('next') ?? '/account';
-    location.href = next;
-  } catch (err) {
+    location.href = params.get('next') ?? '/account';
+  } catch {
     showErr('Network error — is the registry reachable?');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Sign in';
   }
+});
+
+// ── TOTP challenge ─────────────────────────────────────────────────────────
+
+document.getElementById('totp-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!pendingLogin) return;
+  const btn  = document.getElementById('t-btn');
+  const code = document.getElementById('t-code').value.trim();
+  if (!code) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying…';
+  clearMsg();
+
+  try {
+    const { r, data } = await doLogin(pendingLogin.username, pendingLogin.password, code);
+    if (!r.ok) {
+      showErr(data.errors?.[0]?.detail ?? `Error ${r.status}`);
+      return;
+    }
+    Auth.save(data.token, data.refresh_token, pendingLogin.username, false);
+    location.href = params.get('next') ?? '/account';
+  } catch {
+    showErr('Network error — is the registry reachable?');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Verify';
+  }
+});
+
+document.getElementById('back-from-totp').addEventListener('click', e => {
+  e.preventDefault();
+  pendingLogin = null;
+  document.getElementById('t-code').value = '';
+  document.getElementById('form-totp').style.display  = 'none';
+  document.getElementById('form-login').style.display = '';
 });
 
 // ── Forgot password ────────────────────────────────────────────────────────

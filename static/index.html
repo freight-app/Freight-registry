@@ -210,6 +210,10 @@ async function loadStats() {
         <span class="stat-val" style="font-size:1.4rem">${ok ? '✓' : '⚠'}</span>
         <span class="stat-lbl">Registry ${ok ? 'Online' : 'Degraded'}</span>
       </div>`;
+    if (pkgs != null) {
+      const heroQ = document.getElementById('hero-q');
+      if (heroQ) heroQ.placeholder = `Search ${fmtNum(pkgs)}+ packages…`;
+    }
   } catch {}
 }
 

@@ -1013,6 +1013,20 @@ impl Db {
     // ── Ownership ──────────────────────────────────────────────────────────────
 
     /// Count the number of distinct packages owned by `user_id` across all channels.
+    pub async fn get_packages_by_owner(&self, user_id: i64) -> Result<Vec<PackageRow>> {
+        let rows: Vec<PackageRow> = sqlx::query_as(&self.q_sql(
+            "SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords, p.latest_version
+             FROM packages p
+             JOIN package_owners po ON po.package_id = p.id
+             WHERE po.user_id = ?
+             ORDER BY p.name",
+        ))
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn count_owned_packages(&self, user_id: i64) -> Result<i64> {
         let count: i64 = sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM package_owners WHERE user_id = ?"))
         .bind(user_id)

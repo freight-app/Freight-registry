@@ -24,6 +24,8 @@ pub mod health;
 pub mod keywords;
 pub mod login;
 pub mod metrics_handler;
+pub mod me_packages;
+pub mod me_password;
 pub mod my_tokens;
 pub mod oauth;
 pub mod orgs;
@@ -126,6 +128,8 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/packages/:name/:version/yank",     delete(yank::yank).put(yank::unyank))
         .route("/api/v1/packages/:name/owners",            get(owners::list).put(owners::add).delete(owners::remove))
         .route("/api/v1/me",                               get(me))
+        .route("/api/v1/me/packages",                      get(me_packages::my_packages))
+        .route("/api/v1/me/password",                      post(me_password::change_password))
         // TOTP management
         .route("/api/v1/me/totp/enroll",                   post(totp::enroll))
         .route("/api/v1/me/totp/confirm",                  post(totp::confirm))
@@ -217,10 +221,10 @@ async fn me(auth: crate::auth::AuthToken) -> Json<serde_json::Value> {
     Json(json!({
         "login":            auth.user.username,
         "id":               auth.user.id,
+        "email":            auth.user.email,
+        "email_verified":   auth.user.email_verified != 0,
         "is_admin":         auth.user.is_admin != 0,
-        // Token validity.  `token_expires_at` is a Unix timestamp (null = never expires).
-        // `token_expires_in` is seconds remaining (null = never expires).
-        // Call GET /api/v1/me to verify a token is still accepted by the server.
+        "totp_enabled":     auth.user.totp_enabled != 0,
         "token_expires_at": expires_at,
         "token_expires_in": expires_in,
     }))

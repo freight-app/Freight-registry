@@ -447,18 +447,18 @@ const TYPE_KINDS  = new Set(['class','struct','iface','enum','type']);
 const SPACE_KINDS = new Set(['mod']);
 const FN_KINDS    = new Set(['fn','sub','macro']);
 
-// docify lang enum variant → highlight.js language name
+// docify lang label (DocLanguage::label()) → highlight.js language name
 const HLJS_LANG = {
-  C:'c', Cpp:'cpp', Rust:'rust', Fortran:'fortran',
-  D:'d', Ada:'ada', Java:'java', Go:'go',
-  Kotlin:'kotlin', Swift:'swift', Zig:'plaintext',
+  'C':'c', 'C++':'cpp', 'Rust':'rust', 'Fortran':'fortran',
+  'D':'d', 'Ada':'ada', 'Java':'java', 'Go':'go',
+  'Kotlin':'kotlin', 'Swift':'swift', 'Zig':'plaintext',
 };
 
-// Pretty display name for each lang variant
+// label() is already the display form; kept for callers that look it up.
 const LANG_DISPLAY = {
-  C:'C', Cpp:'C++', Rust:'Rust', Fortran:'Fortran',
-  D:'D', Ada:'Ada', Java:'Java', Go:'Go',
-  Kotlin:'Kotlin', Swift:'Swift', Zig:'Zig',
+  'C':'C', 'C++':'C++', 'Rust':'Rust', 'Fortran':'Fortran',
+  'D':'D', 'Ada':'Ada', 'Java':'Java', 'Go':'Go',
+  'Kotlin':'Kotlin', 'Swift':'Swift', 'Zig':'Zig',
 };
 
 function hlCode(code, langVariant) {

@@ -28,6 +28,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+try:
+    import msgpack as _msgpack
+    def _pack(items): return _msgpack.packb(items, use_bin_type=True)
+except ImportError:
+    _msgpack = None
+    def _pack(items): return None
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +42,109 @@ REGISTRY   = str(Path(__file__).parent.parent.parent / "target" / "debug" / "fre
 DATA_DIR   = "/tmp/freight-seed"
 BASE_URL   = "http://localhost:7878"
 SERVER_PID = None
+
+def _fn(name, brief, sig, parent, line, params=(), returns=None, body="", throws=()):
+    tags = [{"kind": "Brief", "name": None, "text": brief}]
+    for pname, pdesc in params:
+        tags.append({"kind": "Param", "name": pname, "text": pdesc})
+    if returns:
+        tags.append({"kind": "Return", "name": None, "text": returns})
+    for exc in throws:
+        tags.append({"kind": {"Other": f"throws {exc}"}, "name": None, "text": f"If thrown by {exc}."})
+    return {
+        "name": name, "kind": "Function", "brief": brief, "body": body,
+        "tags": tags, "file": "/tmp/docexample/src/libvec.hpp", "line": line,
+        "lang": "Cpp", "signature": sig,
+        "meta": {"template_params": [], "access": None, "parent": parent, "attrs": [], "group": None},
+    }
+
+# DocItem list uploaded as the libvec 1.1.0 docs snapshot.
+# Includes explicit overloads for at(), operator[](), and resize() to
+# demonstrate the web viewer's overload grouping.
+_VEC_ITEMS = [
+    # ── namespace + class ────────────────────────────────────────────────────
+    {"name": "", "kind": "Module", "brief": "A minimal generic heap-allocated array.", "body": "",
+     "tags": [{"kind": {"Other": "file"}, "name": None, "text": "libvec.hpp"},
+              {"kind": "Brief", "name": None, "text": "A minimal generic heap-allocated array."}],
+     "file": "/tmp/docexample/src/libvec.hpp", "line": 7, "lang": "Cpp", "signature": "",
+     "meta": {"template_params": [], "access": None, "parent": None, "attrs": [], "group": None}},
+    {"name": "lv", "kind": "Module", "brief": "", "body": "",
+     "tags": [], "file": "/tmp/docexample/src/libvec.hpp", "line": 10, "lang": "Cpp",
+     "signature": "namespace lv {",
+     "meta": {"template_params": [], "access": None, "parent": None, "attrs": [], "group": None}},
+    {"name": "lv::Vec", "kind": "Class",
+     "brief": "Heap-allocated contiguous array with value semantics.",
+     "body": "`Vec<T>` owns its storage and grows by doubling capacity when full.\nIt is safe to copy (deep copy) and move (O(1)).",
+     "tags": [
+         {"kind": "Brief", "name": None, "text": "Heap-allocated contiguous array with value semantics."},
+         {"kind": {"Other": "tparam"}, "name": "T", "text": "Element type.  Must be move-constructible."},
+         {"kind": "Note", "name": None, "text": "Not thread-safe.  Use external synchronisation for concurrent access."},
+         {"kind": "Example", "name": None, "text": "```cpp lv::Vec<int> v = {1, 2, 3}; v.push(4); for (int x : v) std::cout << x << '\\n'; ```"},
+     ],
+     "file": "/tmp/docexample/src/libvec.hpp", "line": 12, "lang": "Cpp",
+     "signature": "class Vec {",
+     "meta": {"template_params": [], "access": None, "parent": None, "attrs": [], "group": None}},
+    # ── constructors / special members ────────────────────────────────────────
+    _fn("lv::Vec::Vec", "Move constructor — transfers ownership in O(1).",
+        "Vec(Vec&& other) noexcept;", "Vec", 30,
+        params=[("other", "Source Vec.  Left in a valid but empty state.")]),
+    # ── size / capacity ───────────────────────────────────────────────────────
+    _fn("lv::Vec::size",     "Number of elements currently stored.",    "size_t size() const noexcept;",     "Vec", 40, returns="Element count."),
+    _fn("lv::Vec::capacity", "Number of elements that can be stored without reallocation.", "size_t capacity() const noexcept;", "Vec", 43, returns="Allocated slot count."),
+    _fn("lv::Vec::empty",    "Returns `true` if the Vec contains no elements.", "bool empty() const noexcept;", "Vec", 46, returns="`true` when size() == 0."),
+    _fn("lv::Vec::reserve",  "Pre-allocate storage for at least `n` elements.", "void reserve(size_t n);", "Vec", 49, params=[("n", "Minimum capacity.")]),
+    # ── element access — overloaded ───────────────────────────────────────────
+    _fn("lv::Vec::at", "Bounds-checked element access (const overload).",
+        "const T& at(size_t i) const;", "Vec", 80,
+        params=[("i", "Zero-based index.")],
+        returns="Const reference to element at index `i`.",
+        throws=["std::out_of_range"]),
+    _fn("lv::Vec::at", "Bounds-checked element access.",
+        "T& at(size_t i);", "Vec", 77,
+        params=[("i", "Zero-based index.")],
+        returns="Reference to element at index `i`.",
+        throws=["std::out_of_range"]),
+    _fn("lv::Vec::operator[]", "Unchecked element access.  UB if `i >= size()`.",
+        "T& operator[](size_t i) noexcept;", "Vec", 86,
+        params=[("i", "Zero-based index.")]),
+    _fn("lv::Vec::operator[]", "Unchecked element access (const).  UB if `i >= size()`.",
+        "const T& operator[](size_t i) const noexcept;", "Vec", 89,
+        params=[("i", "Zero-based index.")]),
+    _fn("lv::Vec::front", "Reference to the first element. UB if empty.", "T& front() noexcept;", "Vec", 92),
+    _fn("lv::Vec::back",  "Reference to the last element. UB if empty.",  "T& back() noexcept;",  "Vec", 95),
+    _fn("lv::Vec::data",  "Pointer to the underlying contiguous storage.", "T* data() noexcept;", "Vec", 98, returns="Raw pointer; valid until next reallocation."),
+    # ── modifiers ─────────────────────────────────────────────────────────────
+    _fn("lv::Vec::push",   "Append a copy of `value` to the end.",    "void push(const T& value);",                  "Vec", 101, params=[("value", "Element to copy-append.")]),
+    _fn("lv::Vec::emplace","Construct an element in-place at the end.","template<class... Args> void emplace(Args&&... args);", "Vec", 104),
+    _fn("lv::Vec::pop",    "Remove the last element.",                  "void pop() noexcept;",                        "Vec", 107),
+    _fn("lv::Vec::erase",  "Remove the element at index `i` by shifting subsequent elements.",
+        "void erase(size_t i);", "Vec", 110, params=[("i", "Index of element to remove.")]),
+    _fn("lv::Vec::clear",  "Remove all elements without releasing storage.", "void clear() noexcept;", "Vec", 113),
+    # ── resize — overloaded ───────────────────────────────────────────────────
+    _fn("lv::Vec::resize", "Resize the vector.  New elements are default-initialised.",
+        "void resize(size_t n);", "Vec", 120,
+        params=[("n", "New element count.")],
+        body="If `n < size()` elements are destroyed; if `n > size()` new elements are value-initialised."),
+    _fn("lv::Vec::resize", "Resize the vector, filling new slots with a given value.",
+        "void resize(size_t n, const T& val);", "Vec", 127,
+        params=[("n", "New element count."), ("val", "Value to copy-construct into new slots.")],
+        body="If `n < size()` elements are destroyed; if `n > size()` new elements are copy-constructed from `val`."),
+    # ── iterators ─────────────────────────────────────────────────────────────
+    _fn("lv::Vec::begin", "Const iterator to the first element.",    "const T* begin() const noexcept;", "Vec", 130, returns="Pointer to first element."),
+    _fn("lv::Vec::end",   "Past-the-end const iterator.",            "const T* end() const noexcept;",   "Vec", 133, returns="One past the last element."),
+    # ── free functions ────────────────────────────────────────────────────────
+    _fn("lv::operator==", "Element-wise equality comparison.",
+        "template<class T> bool operator==(const Vec<T>& a, const Vec<T>& b) noexcept;",
+        None, 150,
+        params=[("a", "Left-hand Vec."), ("b", "Right-hand Vec.")],
+        returns="`true` if both Vecs have the same size and equal elements."),
+    _fn("lv::swap", "Swap two Vecs in O(1).",
+        "template<class T> void swap(Vec<T>& a, Vec<T>& b) noexcept;",
+        None, 158,
+        params=[("a", "First Vec."), ("b", "Second Vec.")]),
+]
+
+LIBVEC_DOCS = _pack(_VEC_ITEMS)
 
 USERS = [
     {"username": "alice",   "email": "alice@example.com",  "password": "hunter2!"},
@@ -89,6 +199,7 @@ vec3 c = vec3_add(a, b);
         "deps": {"gtest": "1.14"},
         "owner": "alice",
         "readme": None,   # inherit from 1.0.0
+        "docs": LIBVEC_DOCS,
     },
     {
         "name": "zlib-ng",
@@ -502,6 +613,18 @@ def main():
                 print(f"    ↳ README uploaded")
             published_readmes.setdefault(pkg["name"], readme)
             time.sleep(6)
+
+        # Upload docs if provided
+        docs_body = pkg.get("docs")
+        if docs_body:
+            ds, _ = api_request("PUT", f"/api/v1/packages/{pkg['name']}/{pkg['vers']}/docs",
+                                body=docs_body, token=token,
+                                content_type="application/octet-stream")
+            if ds == 200:
+                print(f"    ↳ docs uploaded")
+            else:
+                print(f"    ↳ docs upload failed (status {ds}) — install msgpack: pip install msgpack")
+            time.sleep(2)
 
     # ── 4. Promote alice to admin ─────────────────────────────────────────────
     print("\nPromoting alice to admin…")

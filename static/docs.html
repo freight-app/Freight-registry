@@ -5,8 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Docs — Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/highlight.min.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
+    /* ── Override highlight.js with TUI-matching One Dark palette ─────────── */
+    .hljs { background: transparent !important; color: rgb(200,210,220); }
+    .hljs-keyword, .hljs-selector-tag, .hljs-tag { color: rgb(198,120,221); }
+    .hljs-string, .hljs-attr, .hljs-attribute  { color: rgb(152,195,121); }
+    .hljs-number, .hljs-literal                { color: rgb(229,192,123); }
+    .hljs-comment, .hljs-quote                 { color: rgb(92,99,112); font-style: italic; }
+    .hljs-title, .hljs-name, .hljs-section     { color: rgb(97,175,239); }
+    .hljs-type, .hljs-class .hljs-title        { color: rgb(229,192,123); }
+    .hljs-built_in, .hljs-builtin-name         { color: rgb(86,182,194); }
+    .hljs-operator, .hljs-punctuation          { color: rgb(180,180,200); }
+    .hljs-variable, .hljs-template-variable    { color: rgb(200,220,200); }
+    .hljs-params                               { color: rgb(180,180,180); }
+    .hljs-meta                                 { color: rgb(130,170,130); }
     /* ── TUI color palette ─────────────────────────────────────────────────── */
     :root {
       --tui-pkg:     rgb(220,200,120);
@@ -79,6 +93,35 @@
       margin-top: 2px;
     }
 
+    .sidebar-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--tui-hint);
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .sidebar-meta-row a {
+      color: var(--tui-active);
+      text-decoration: none;
+    }
+    .sidebar-meta-row a:hover { text-decoration: underline; }
+    .sidebar-meta-label {
+      color: var(--tui-hint);
+      flex-shrink: 0;
+    }
+    .sidebar-owner-chip {
+      background: rgba(130,170,130,0.12);
+      border: 1px solid rgba(130,170,130,0.25);
+      border-radius: 3px;
+      padding: 0 5px;
+      font-size: 10px;
+      color: var(--tui-kind);
+      white-space: nowrap;
+    }
     #sidebar-back {
       font-size: 11px;
       margin-top: 6px;
@@ -570,6 +613,8 @@
     <div id="sidebar-header">
       <div id="sidebar-pkg-name">Loading…</div>
       <div id="sidebar-pkg-ver"></div>
+      <div id="sidebar-source"></div>
+      <div id="sidebar-owners"></div>
       <div id="sidebar-back"></div>
     </div>
     <div id="sidebar-search-wrap">
@@ -589,8 +634,34 @@
 </div>
 
 <script src="/app.js"></script>
+<script src="/highlight.min.js"></script>
 <script>
 'use strict';
+
+/* Map fence lang tags → highlight.js language names */
+const HLJS_LANG = {
+  c:'c', cpp:'cpp', 'c++':'cpp', cc:'cpp', cxx:'cpp',
+  rust:'rust', rs:'rust',
+  python:'python', py:'python',
+  js:'javascript', javascript:'javascript',
+  ts:'typescript', typescript:'typescript',
+  go:'go', java:'java', kotlin:'kotlin', swift:'swift',
+  fortran:'fortran', f90:'fortran', f95:'fortran',
+  d:'d', ada:'ada', zig:'zig',
+  bash:'bash', sh:'bash', shell:'bash',
+  toml:'toml', yaml:'yaml', json:'json', xml:'xml',
+  cmake:'cmake', makefile:'makefile',
+};
+
+function hlCode(code, lang) {
+  if (typeof hljs === 'undefined') return esc(code);
+  const l = HLJS_LANG[lang?.toLowerCase()] ?? null;
+  try {
+    return l
+      ? hljs.highlight(code, { language: l, ignoreIllegals: true }).value
+      : hljs.highlightAuto(code, Object.values(HLJS_LANG)).value;
+  } catch { return esc(code); }
+}
 
 /* ── Globals ────────────────────────────────────────────────────────────────── */
 const pathParts = location.pathname.split('/').filter(Boolean);
@@ -642,11 +713,13 @@ function renderMarkdown(md) {
   let inFence = false, fenceLang = '', fenceLines = [];
 
   function flushFence() {
-    const lang = esc(fenceLang || '');
+    const lang = fenceLang || '';
+    const dashes = '─'.repeat(Math.max(2, 30 - lang.length));
     const header = lang
-      ? `<div class="code-block-header">─── ${lang} ${'─'.repeat(Math.max(2, 28 - lang.length))}</div>`
+      ? `<div class="code-block-header">─── ${esc(lang)} ${dashes}</div>`
       : `<div class="code-block-header">─────────────────────────────────</div>`;
-    out.push(`<div class="code-block-wrap">${header}<pre><code>${esc(fenceLines.join('\n'))}</code></pre></div>`);
+    const highlighted = hlCode(fenceLines.join('\n'), lang);
+    out.push(`<div class="code-block-wrap">${header}<pre><code>${highlighted}</code></pre></div>`);
     fenceLines = [];
     fenceLang = '';
     inFence = false;
@@ -911,10 +984,11 @@ function renderSymbol(item) {
   /* Signature / prototype */
   if (item.signature || item.proto) {
     const sig = item.signature ?? item.proto;
-    const lang = item.language ?? 'cpp';
+    const lang = item.language ?? item.lang ?? 'cpp';
+    const dashes = '─'.repeat(Math.max(2, 30 - lang.length));
     html += `<div class="code-block-wrap">
-      <div class="code-block-header">─── ${esc(lang)} ${'─'.repeat(Math.max(2, 28 - lang.length))}</div>
-      <pre><code>${esc(sig)}</code></pre>
+      <div class="code-block-header">─── ${esc(lang)} ${dashes}</div>
+      <pre><code>${hlCode(sig, lang)}</code></pre>
     </div>`;
   }
 
@@ -1067,9 +1141,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   try {
-    const [pkg, docsResp] = await Promise.all([
+    const [pkg, docsResp, ownersResp] = await Promise.all([
       API.getPackage(pkgName),
       fetch(`/api/v1/packages/${encodeURIComponent(pkgName)}/latest/docs`),
+      API.getOwners(pkgName),
     ]);
     pkgInfo = pkg;
 
@@ -1077,6 +1152,29 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (pkg) {
       document.getElementById('sidebar-pkg-name').textContent = pkg.name;
       document.getElementById('sidebar-pkg-ver').textContent  = `v${pkg.latest ?? ''}`;
+
+      /* Source link — derive from upstream_url if present */
+      const src = repoUrl(pkg.upstream_url ?? pkg.url ?? '');
+      if (src) {
+        const label = repoLabel(src);
+        document.getElementById('sidebar-source').innerHTML =
+          `<div class="sidebar-meta-row">
+             <span class="sidebar-meta-label">source</span>
+             <a href="${esc(src)}" target="_blank" rel="noopener">${esc(label)} ↗</a>
+           </div>`;
+      }
+
+      /* Owners */
+      const owners = ownersResp?.users ?? ownersResp?.owners ?? [];
+      if (owners.length) {
+        const chips = owners.map(o => {
+          const name = typeof o === 'string' ? o : (o.username ?? o.name ?? String(o));
+          return `<a href="/users/${esc(name)}" class="sidebar-owner-chip">${esc(name)}</a>`;
+        }).join('');
+        document.getElementById('sidebar-owners').innerHTML =
+          `<div class="sidebar-meta-row" style="flex-wrap:wrap;gap:4px;margin-top:5px">${chips}</div>`;
+      }
+
       document.getElementById('sidebar-back').innerHTML =
         `<a href="/packages/${esc(pkg.name)}">← back to package</a>`;
     } else {

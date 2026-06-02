@@ -710,17 +710,17 @@ const pathParts = location.pathname.split('/').filter(Boolean);
 const pkgName   = pathParts[1] ?? '';
 document.title  = `${pkgName} — Docs`;
 
+/* DocKind serde variants → short display label (mirrors kind_label() in browser.rs) */
 const KIND_LABEL = {
-  fn: 'fn', sub: 'sub', macro: 'macro',
-  struct: 'struct', class: 'class', enum: 'enum',
-  type: 'type', iface: 'interface', var: 'var',
-  mod: 'namespace', item: 'item', namespace: 'namespace',
-  method: 'method', field: 'field', ctor: 'ctor',
+  Function:  'fn',    Subroutine: 'sub',  Macro:     'macro',
+  Class:     'class', Struct:     'struct', Interface: 'iface',
+  Enum:      'enum',  Typedef:    'type',  Module:    'ns',
+  Variable:  'var',   Unknown:    '?',
 };
 
-const TYPE_KINDS      = new Set(['class','struct','iface','enum','type']);
-const FN_KINDS        = new Set(['fn','sub','macro','method','ctor']);
-const NAMESPACE_KINDS = new Set(['mod','namespace']);
+const TYPE_KINDS = new Set(['Class','Struct','Interface','Enum','Typedef']);
+const NS_KINDS   = new Set(['Module']);
+const FN_KINDS   = new Set(['Function','Subroutine','Macro']);
 
 let docsData  = null;  /* full JSON from /docs endpoint */
 let pkgInfo   = null;  /* package metadata */
@@ -814,113 +814,208 @@ function renderMarkdown(md) {
   return out.join('\n');
 }
 
-/* ── Sidebar building ───────────────────────────────────────────────────────── */
+/* ── Sidebar — freight-doc grouping ─────────────────────────────────────────── */
+
+/**
+ * Derive namespace prefixes from item names, exactly mirroring
+ * derive_namespaces() in browser.rs.
+ * Module items contribute their name directly; other qualified names
+ * contribute every non-leaf prefix, skipping prefixes that are class names.
+ */
+function deriveNamespaces(items) {
+  const classNames = new Set(
+    items
+      .filter(i => TYPE_KINDS.has(i.kind))
+      .map(i => i.name.includes('::') ? i.name.split('::').at(-1)
+               : i.name.includes('.') ? i.name.split('.').at(-1)
+               : i.name)
+  );
+  const set = new Set();
+  for (const item of items) {
+    if (item.meta?.parent) continue;
+    if (NS_KINDS.has(item.kind) && item.name) { set.add(item.name); continue; }
+    for (const sep of ['::', '.']) {
+      const parts = item.name.split(sep);
+      if (parts.length > 1) {
+        for (let i = 1; i < parts.length; i++) {
+          const ns = parts.slice(0, i).join(sep);
+          const simple = ns.includes('::') ? ns.split('::').at(-1)
+                       : ns.includes('.')  ? ns.split('.').at(-1)
+                       : ns;
+          if (ns && !classNames.has(simple)) set.add(ns);
+        }
+        break;
+      }
+    }
+  }
+  return [...set].sort();
+}
+
+/** Items whose name starts with `ns::` or `ns.` (not Module, not class members). */
+function itemsInNs(items, ns) {
+  const pfxCC  = ns + '::';
+  const pfxDot = ns + '.';
+  return items.filter(i =>
+    !NS_KINDS.has(i.kind) &&
+    !i.meta?.parent &&
+    (i.name.startsWith(pfxCC) || i.name.startsWith(pfxDot))
+  );
+}
+
+/** True if item's qualified name sits inside one of `namespaces`. */
+function isInNamespace(item, namespaces) {
+  for (const sep of ['::', '.']) {
+    const idx = item.name.lastIndexOf(sep);
+    if (idx > 0 && namespaces.includes(item.name.slice(0, idx))) return true;
+  }
+  return false;
+}
+
+/** True if item has children (class members or namespace items) in `items`. */
+function hasMembers(items, item) {
+  const simple = item.name.includes('::') ? item.name.split('::').at(-1)
+               : item.name.includes('.')  ? item.name.split('.').at(-1)
+               : item.name;
+  return items.some(i => i.meta?.parent === simple || i.meta?.parent === item.name);
+}
 
 function buildSidebar(items, filter) {
-  const q = (filter ?? '').toLowerCase();
+  const q    = (filter ?? '').toLowerCase();
   const tree = document.getElementById('sidebar-tree');
   if (!items.length) {
     tree.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--tui-hint);">No symbols.</div>';
     return;
   }
 
-  const filtered = q ? items.filter(it => it.name?.toLowerCase().includes(q)) : items;
+  const src = q ? items.filter(i => i.name?.toLowerCase().includes(q)) : items;
+  const cur  = location.hash.slice(1);
+  const namespaces = deriveNamespaces(src);
 
-  /* group by kind-category */
-  const groups = {
-    'Classes & Types': filtered.filter(i => TYPE_KINDS.has(i.kind)),
-    'Namespaces':      filtered.filter(i => NAMESPACE_KINDS.has(i.kind)),
-    'Functions':       filtered.filter(i => FN_KINDS.has(i.kind)),
-    'Variables':       filtered.filter(i => i.kind === 'var'),
-    'Other':           filtered.filter(i =>
-      !TYPE_KINDS.has(i.kind) && !NAMESPACE_KINDS.has(i.kind) &&
-      !FN_KINDS.has(i.kind) && i.kind !== 'var'
-    ),
-  };
+  /* helper: render a single leaf entry */
+  function entry(it, indent) {
+    const s  = slug(it.name);
+    const ac = cur === s ? ' active' : '';
+    const pad = indent ? ' style="padding-left:' + indent + 'px"' : '';
+    return `<a class="sidebar-entry${ac}" data-hash="${esc(s)}"${pad}>
+      <span class="sidebar-entry-name">${esc(shortName(it.name))}</span>
+      ${kindBadge(it.kind)}
+    </a>`;
+  }
 
-  const currentHash = location.hash.slice(1);
+  /* helper: collapsible group (class or namespace) */
+  function group(header, children, headHash) {
+    const ac  = cur === headHash ? ' active' : '';
+    const open = children.some(c => slug(c.name) === cur) ? ' open' : '';
+    const cm   = open ? '' : ' collapsed';
+    return `<div class="sidebar-group${open}">
+      <a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">
+        <span class="sidebar-group-toggle">▶</span>
+        ${header}
+      </a>
+      <div class="sidebar-group-members${cm}">
+        ${children.map(c => entry(c, 30)).join('')}
+      </div>
+    </div>`;
+  }
+
+  /* helper: collapsible section */
+  function section(title, body) {
+    return `<div class="sidebar-section-hdr" data-section="${esc(title)}">${esc(title)}</div>
+            <div class="sidebar-section-body" data-section-body="${esc(title)}">${body}</div>`;
+  }
+
   let html = '';
 
-  /* index link */
-  html += `<a class="sidebar-entry${currentHash === 'index' || !currentHash ? ' active' : ''}" data-hash="index">
+  /* Overview link */
+  html += `<a class="sidebar-entry${!cur || cur === 'index' ? ' active' : ''}" data-hash="index">
     <span class="sidebar-entry-name">Overview</span>
   </a>`;
 
-  for (const [title, members] of Object.entries(groups)) {
-    if (!members.length) continue;
-    const sorted = [...members].sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
-    html += `
-      <div class="sidebar-section-hdr" data-section="${esc(title)}">${esc(title)}</div>
-      <div class="sidebar-section-body" data-section-body="${esc(title)}">`;
+  /* 1. Type items not in any namespace */
+  const typeItems = src.filter(i =>
+    TYPE_KINDS.has(i.kind) && !i.meta?.parent && !isInNamespace(i, namespaces)
+  ).sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
 
-    for (const it of sorted) {
-      const s = slug(it.name);
-      const active = currentHash === s ? ' active' : '';
-      /* Check for members (class/namespace with sub-items) */
-      const children = items.filter(c => {
-        const parent = c.name.includes('::') ? c.name.slice(0, c.name.lastIndexOf('::')) : null;
-        return parent === it.name;
-      });
-
-      if (children.length && (TYPE_KINDS.has(it.kind) || NAMESPACE_KINDS.has(it.kind))) {
-        html += `<div class="sidebar-group">
-          <a class="sidebar-entry${active}" data-hash="${esc(s)}">
-            <span class="sidebar-group-toggle">▶</span>
-            <span class="sidebar-entry-name">${esc(shortName(it.name))}</span>
-            ${kindBadge(it.kind)}
-          </a>
-          <div class="sidebar-group-members collapsed">`;
-        for (const child of children.sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)))) {
-          const cs = slug(child.name);
-          const ca = currentHash === cs ? ' active' : '';
-          html += `<a class="sidebar-entry${ca}" data-hash="${esc(cs)}">
-            <span class="sidebar-entry-name">${esc(shortName(child.name))}</span>
-            ${kindBadge(child.kind)}
-          </a>`;
-        }
-        html += `</div></div>`;
-      } else {
-        html += `<a class="sidebar-entry${active}" data-hash="${esc(s)}">
-          <span class="sidebar-entry-name">${esc(shortName(it.name))}</span>
-          ${kindBadge(it.kind)}
-        </a>`;
+  if (typeItems.length) {
+    const body = typeItems.map(it => {
+      const children = src
+        .filter(c => c.meta?.parent === shortName(it.name) || c.meta?.parent === it.name)
+        .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+      if (children.length) {
+        return group(
+          `<span class="sidebar-entry-name">${esc(shortName(it.name))}</span>${kindBadge(it.kind)}`,
+          children, slug(it.name)
+        );
       }
-    }
-    html += `</div>`;
+      return entry(it, 0);
+    }).join('');
+    html += section('Classes & Types', body);
+  }
+
+  /* 2. Namespaces */
+  if (namespaces.length) {
+    const body = namespaces.map(ns => {
+      const nsItem = src.find(i => i.name === ns && NS_KINDS.has(i.kind));
+      const children = itemsInNs(src, ns)
+        .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+      const headHash = nsItem ? slug(nsItem.name) : slug(ns);
+      const label = `<span class="sidebar-entry-name">${esc(ns)}</span>${kindBadge('Module')}`;
+      if (!children.length) {
+        const ac = cur === headHash ? ' active' : '';
+        return `<a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">${label}</a>`;
+      }
+      return group(label, children, headHash);
+    }).join('');
+    html += section('Namespaces', body);
+  }
+
+  /* 3. Free symbols — not type, not namespace kind, not in namespace, not class member */
+  const free = src.filter(i =>
+    !TYPE_KINDS.has(i.kind) &&
+    !NS_KINDS.has(i.kind) &&
+    !i.meta?.parent &&
+    !isInNamespace(i, namespaces)
+  ).sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+
+  /* Sub-group free symbols by kind for readability */
+  const freeByKind = [
+    ['Functions',  free.filter(i => FN_KINDS.has(i.kind))],
+    ['Variables',  free.filter(i => i.kind === 'Variable')],
+    ['Other',      free.filter(i => !FN_KINDS.has(i.kind) && i.kind !== 'Variable')],
+  ];
+  for (const [title, group_items] of freeByKind) {
+    if (!group_items.length) continue;
+    html += section(title, group_items.map(i => entry(i, 0)).join(''));
   }
 
   tree.innerHTML = html;
 
-  /* Click handlers */
+  /* ── Event wiring ──────────────────────────────────────────────────────── */
+
   tree.querySelectorAll('.sidebar-entry[data-hash]').forEach(el => {
     el.addEventListener('click', e => {
       e.preventDefault();
-      const h = el.dataset.hash;
-      navigateTo(h);
-      /* expand group if member clicked */
+      navigateTo(el.dataset.hash);
       const gm = el.closest('.sidebar-group-members');
       if (gm) gm.classList.remove('collapsed');
     });
   });
 
-  /* Section collapse */
   tree.querySelectorAll('.sidebar-section-hdr').forEach(el => {
     el.addEventListener('click', () => {
-      const key = el.dataset.section;
-      const body = tree.querySelector(`[data-section-body="${key}"]`);
+      const body = tree.querySelector(`[data-section-body="${el.dataset.section}"]`);
       el.classList.toggle('collapsed');
-      if (body) body.classList.toggle('collapsed');
+      body?.classList.toggle('collapsed');
     });
   });
 
-  /* Group expand */
   tree.querySelectorAll('.sidebar-group > .sidebar-entry').forEach(el => {
-    el.addEventListener('click', e => {
-      const group = el.closest('.sidebar-group');
-      const members = group?.querySelector('.sidebar-group-members');
+    el.addEventListener('click', () => {
+      const grp     = el.closest('.sidebar-group');
+      const members = grp?.querySelector('.sidebar-group-members');
       if (members) {
         members.classList.toggle('collapsed');
-        group.classList.toggle('open');
+        grp.classList.toggle('open');
       }
     });
   });
@@ -999,8 +1094,8 @@ function renderIndex() {
   const counts = {
     types: items.filter(i => TYPE_KINDS.has(i.kind)).length,
     fns:   items.filter(i => FN_KINDS.has(i.kind)).length,
-    vars:  items.filter(i => i.kind === 'var').length,
-    ns:    items.filter(i => NAMESPACE_KINDS.has(i.kind)).length,
+    vars:  items.filter(i => i.kind === 'Variable').length,
+    ns:    items.filter(i => NS_KINDS.has(i.kind)).length,
   };
 
   const cmdText = `freight doc ${pkgName}`;

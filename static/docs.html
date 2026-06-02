@@ -681,17 +681,17 @@ const pathParts = location.pathname.split('/').filter(Boolean);
 const pkgName   = pathParts[1] ?? '';
 document.title  = `${pkgName} — Docs`;
 
-/* DocKind serde variants → short display label (mirrors kind_label() in browser.rs) */
+/* Item kind is already the display label from DocKind::label() — lowercase short form */
 const KIND_LABEL = {
-  Function:  'fn',    Subroutine: 'sub',  Macro:     'macro',
-  Class:     'class', Struct:     'struct', Interface: 'iface',
-  Enum:      'enum',  Typedef:    'type',  Module:    'ns',
-  Variable:  'var',   Unknown:    '?',
+  fn:'fn', sub:'sub', macro:'macro',
+  class:'class', struct:'struct', iface:'iface',
+  enum:'enum', type:'type', mod:'ns',
+  var:'var', '?':'?',
 };
 
-const TYPE_KINDS = new Set(['Class','Struct','Interface','Enum','Typedef']);
-const NS_KINDS   = new Set(['Module']);
-const FN_KINDS   = new Set(['Function','Subroutine','Macro']);
+const TYPE_KINDS = new Set(['class','struct','iface','enum','type']);
+const NS_KINDS   = new Set(['mod']);
+const FN_KINDS   = new Set(['fn','sub','macro']);
 
 let docsData  = null;  /* full JSON from /docs endpoint */
 let pkgInfo   = null;  /* package metadata */
@@ -974,13 +974,17 @@ function buildSidebar(items, filter) {
 
 /**
  * Normalise a DocTag.kind to a lowercase string.
- * kind is either a plain string ("Param", "Return", …) or {"Other": "tparam"}.
+ *
+ * The registry serialises TagKind using its Debug impl, so the wire format is:
+ *   plain variants → "Param", "Return", "Note", …
+ *   Other variant  → `Other("tparam")`, `Other("throws std::bad_alloc")`, …
  */
 function tagKind(tag) {
   if (!tag?.kind) return '';
-  if (typeof tag.kind === 'string') return tag.kind.toLowerCase();
-  if (typeof tag.kind === 'object' && tag.kind.Other) return tag.kind.Other.toLowerCase();
-  return '';
+  const k = String(tag.kind);
+  const m = k.match(/^Other\("(.+)"\)$/);
+  if (m) return m[1].toLowerCase();
+  return k.toLowerCase();
 }
 
 function tagsOf(item, kind) {
@@ -988,38 +992,39 @@ function tagsOf(item, kind) {
 }
 
 /**
- * Map a serialised DocLanguage variant ("Cpp", "C", "Rust", …) to a
- * highlight.js language tag and a human-readable display label.
+ * Map DocLanguage::label() strings (the human-readable form stored in the JSON
+ * "lang" field) to a highlight.js language tag.
  */
 const LANG_MAP = {
-  C:          { hl: 'c',          label: 'C'          },
-  Cpp:        { hl: 'cpp',        label: 'C++'        },
-  Rust:       { hl: 'rust',       label: 'Rust'       },
-  Fortran:    { hl: 'fortran',    label: 'Fortran'    },
-  D:          { hl: 'd',          label: 'D'          },
-  Ada:        { hl: 'ada',        label: 'Ada'        },
-  Java:       { hl: 'java',       label: 'Java'       },
-  Go:         { hl: 'go',         label: 'Go'         },
-  Zig:        { hl: 'zig',        label: 'Zig'        },
-  Kotlin:     { hl: 'kotlin',     label: 'Kotlin'     },
-  Swift:      { hl: 'swift',      label: 'Swift'      },
-  Python:     { hl: 'python',     label: 'Python'     },
-  TypeScript: { hl: 'typescript', label: 'TypeScript' },
-  JavaScript: { hl: 'javascript', label: 'JavaScript' },
-  CSharp:     { hl: 'csharp',     label: 'C#'         },
-  Php:        { hl: 'php',        label: 'PHP'        },
-  Ruby:       { hl: 'ruby',       label: 'Ruby'       },
-  Lua:        { hl: 'lua',        label: 'Lua'        },
-  R:          { hl: 'r',          label: 'R'          },
-  Haskell:    { hl: 'haskell',    label: 'Haskell'    },
+  'C':          { hl: 'c'          },
+  'C++':        { hl: 'cpp'        },
+  'Rust':       { hl: 'rust'       },
+  'Fortran':    { hl: 'fortran'    },
+  'D':          { hl: 'd'          },
+  'Ada':        { hl: 'ada'        },
+  'Java':       { hl: 'java'       },
+  'Go':         { hl: 'go'         },
+  'Zig':        { hl: 'plaintext'  },
+  'Kotlin':     { hl: 'kotlin'     },
+  'Swift':      { hl: 'swift'      },
+  'Python':     { hl: 'python'     },
+  'TypeScript': { hl: 'typescript' },
+  'JavaScript': { hl: 'javascript' },
+  'C#':         { hl: 'csharp'     },
+  'PHP':        { hl: 'php'        },
+  'Ruby':       { hl: 'ruby'       },
+  'Lua':        { hl: 'lua'        },
+  'R':          { hl: 'r'          },
+  'Haskell':    { hl: 'haskell'    },
 };
 
-function langInfo(langVariant) {
-  return LANG_MAP[langVariant] ?? { hl: null, label: langVariant ?? '' };
+function langInfo(langLabel) {
+  const hl = LANG_MAP[langLabel]?.hl ?? null;
+  return { hl, label: langLabel ?? '' };
 }
 
-function codeBlock(code, langVariant) {
-  const { hl, label } = langInfo(langVariant);
+function codeBlock(code, langLabel) {
+  const { hl, label } = langInfo(langLabel);
   const dashes = '─'.repeat(Math.max(2, 30 - label.length));
   const header = label
     ? `<div class="code-block-header">─── ${esc(label)} ${dashes}</div>`
@@ -1118,7 +1123,7 @@ function wireLocalCard(cmdText) {
 
 function renderSymbol(item) {
   const detail = document.getElementById('docs-detail');
-  const langVariant = item.lang ?? item.language ?? 'Cpp';
+  const langVariant = item.lang ?? item.language ?? 'C++';
   const tags = item.tags ?? [];
 
   const params     = tagsOf(item, 'param');
@@ -1230,11 +1235,16 @@ function renderSymbol(item) {
   if (examples.length) {
     html += divider() + sectionLabel('Examples');
     for (const ex of examples) {
-      /* If text looks like a code block, render it; otherwise markdown */
-      if (ex.text.trim().startsWith('```') || ex.text.trim().startsWith('~~~')) {
-        html += `<div class="detail-body">${renderMarkdown(ex.text)}</div>`;
+      const t = ex.text.trim();
+      // Single-line fence: ```lang code``` — extract lang + code directly.
+      const singleLine = t.match(/^(?:```|~~~)(\w*)\s+([\s\S]+?)\s*(?:```|~~~)$/);
+      if (singleLine) {
+        html += codeBlock(singleLine[2], singleLine[1] || langVariant);
+      } else if (t.startsWith('```') || t.startsWith('~~~')) {
+        // Multi-line fence — let renderMarkdown handle it.
+        html += `<div class="detail-body">${renderMarkdown(t)}</div>`;
       } else {
-        html += codeBlock(ex.text, langVariant);
+        html += codeBlock(t, langVariant);
       }
     }
   }
@@ -1370,22 +1380,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.getElementById('sidebar-pkg-name').textContent = pkg.name;
       document.getElementById('sidebar-pkg-ver').textContent  = `v${pkg.latest ?? ''}`;
 
-      /* Source link — derive from upstream_url if present */
-      const src = repoUrl(pkg.upstream_url ?? pkg.url ?? '');
+      /* Source link — upstream_url lives in the latest version entry */
+      const latestVer = pkg.versions?.find(v => v.version === pkg.latest) ?? pkg.versions?.[0];
+      const src = repoUrl(latestVer?.upstream_url ?? '');
       if (src) {
-        const label = repoLabel(src);
         document.getElementById('sidebar-source').innerHTML =
           `<div class="sidebar-meta-row">
              <span class="sidebar-meta-label">source</span>
-             <a href="${esc(src)}" target="_blank" rel="noopener">${esc(label)} ↗</a>
+             <a href="${esc(src)}" target="_blank" rel="noopener">${esc(repoLabel(src))} ↗</a>
            </div>`;
       }
 
-      /* Owners */
+      /* Owners — API returns { users: [{ id, login }, …] } */
       const owners = ownersResp?.users ?? ownersResp?.owners ?? [];
       if (owners.length) {
         const chips = owners.map(o => {
-          const name = typeof o === 'string' ? o : (o.username ?? o.name ?? String(o));
+          const name = typeof o === 'string' ? o : (o.login ?? o.username ?? o.name ?? '?');
           return `<a href="/users/${esc(name)}" class="sidebar-owner-chip">${esc(name)}</a>`;
         }).join('');
         document.getElementById('sidebar-owners').innerHTML =

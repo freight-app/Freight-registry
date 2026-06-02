@@ -6,376 +6,170 @@
   <title>Docs — Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <link rel="stylesheet" href="/highlight.min.css">
   <style>
     body { flex-direction: column; }
 
-    .docs-shell {
-      display: flex;
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
-    }
-
-    /* ── Sidebar ─────────────────────────────────────────────────────────── */
-    .docs-sidebar {
-      width: 272px;
-      flex-shrink: 0;
-      background: var(--surface);
-      border-right: 1px solid var(--border);
-      overflow-y: auto;
-      padding: 12px 0 32px;
-      position: sticky;
-      top: 56px;
-      height: calc(100vh - 56px);
-    }
-
-    .sb-search {
-      padding: 0 12px 10px;
-    }
-    .sb-search input {
+    .docs-page {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
       width: 100%;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      color: var(--text);
-      font-size: 13px;
-      padding: 6px 10px;
-      outline: none;
       box-sizing: border-box;
     }
-    .sb-search input:focus { border-color: var(--accent); }
 
-    .sb-home {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 14px;
-      font-size: 13px;
-      color: var(--muted);
-      cursor: pointer;
-      border-left: 2px solid transparent;
-      margin-bottom: 6px;
+    /* ── Local callout card ─────────────────────────────────────────────── */
+    .local-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 36px;
     }
-    .sb-home:hover { color: var(--text); background: rgba(255,255,255,.03); }
 
-    .sb-section { margin-bottom: 4px; }
-    .sb-section-hdr {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 14px 4px;
-      font-size: 10.5px;
+    .local-card h2 {
+      margin: 0 0 8px;
+      font-size: 1.1rem;
       font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      user-select: none;
-    }
-    .sb-section-hdr::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--border);
-    }
-
-    .sb-node {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 4px 12px;
-      font-size: 13px;
       color: var(--text);
-      cursor: pointer;
-      border-left: 2px solid transparent;
-      user-select: none;
     }
-    .sb-node:hover { background: rgba(255,255,255,.035); }
-    .sb-node.active { border-left-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-    .sb-node.indent { padding-left: 26px; }
-    .sb-node.indent2 { padding-left: 38px; }
 
-    .sb-toggle {
-      width: 14px;
-      font-size: 9px;
+    .local-card p {
+      margin: 0 0 14px;
+      font-size: 14px;
       color: var(--muted);
-      flex-shrink: 0;
-      display: inline-block;
-      text-align: center;
-      transition: transform .12s;
+      line-height: 1.6;
     }
-    .sb-toggle.open { transform: rotate(90deg); }
 
-    .sb-badge {
-      font-size: 9.5px;
+    .local-card p code {
       font-family: var(--font-mono);
       background: var(--code-bg);
-      color: var(--muted);
       border-radius: 3px;
-      padding: 1px 4px;
-      flex-shrink: 0;
-    }
-
-    .sb-label {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      flex: 1;
-    }
-
-    /* ── Main content ────────────────────────────────────────────────────── */
-    .docs-main {
-      flex: 1;
-      overflow-y: auto;
-      padding: 36px 52px 72px;
-    }
-    .docs-main-inner { max-width: 920px; }
-
-    /* Package header */
-    .dox-pkg-hdr {
-      margin-bottom: 36px;
-      padding-bottom: 22px;
-      border-bottom: 2px solid var(--border);
-    }
-    .dox-pkg-hdr h1 {
-      margin: 0 0 6px;
-      font-size: 1.5rem;
-      display: flex;
-      align-items: baseline;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .dox-pkg-hdr .ver  { font-size: 1rem; font-weight: 400; color: var(--muted); }
-    .dox-pkg-hdr .meta { font-size: 13px; color: var(--muted); }
-    .dox-pkg-hdr .meta a { color: var(--muted); }
-    .dox-pkg-hdr .meta a:hover { color: var(--accent); }
-
-    /* Breadcrumb */
-    .dox-bc {
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      flex-wrap: wrap;
-    }
-    .dox-bc a { color: var(--muted); cursor: pointer; }
-    .dox-bc a:hover { color: var(--accent); text-decoration: none; }
-    .dox-bc-sep { color: var(--border); }
-
-    /* Page title */
-    .dox-page-title {
-      display: flex;
-      align-items: baseline;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin: 0 0 4px;
-    }
-    .dox-page-title h2 {
-      margin: 0;
-      font-size: 1.35rem;
-      font-weight: 700;
-    }
-    .dox-kind-chip {
-      font-size: 11px;
-      font-family: var(--font-mono);
-      font-weight: 600;
-      color: var(--accent);
-      background: var(--accent-dim);
-      border: 1px solid var(--accent);
-      border-radius: 3px;
-      padding: 2px 6px;
-    }
-    .dox-page-lang {
-      font-size: 11px;
-      color: var(--muted);
-    }
-    .dox-page-brief {
-      font-size: 14px;
-      margin: 8px 0 0;
+      padding: 1px 5px;
+      font-size: 13px;
       color: var(--text);
     }
 
-    /* Doxygen-style section divider */
-    .dox-sec-title {
-      margin-top: 36px;
-      font-size: 12px;
-      font-weight: 700;
+    .cmd-copy {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      color: var(--text);
+    }
+
+    .cmd-copy span {
+      flex: 1;
+      user-select: all;
+    }
+
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
       color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 3px 8px;
+      font-family: var(--font-sans, inherit);
+      transition: color .12s, border-color .12s;
+    }
+
+    .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+    .copy-btn.copied { color: #4ade80; border-color: #4ade80; }
+
+    /* ── Symbol index ────────────────────────────────────────────────────── */
+    .sym-section {
+      margin-bottom: 32px;
+    }
+
+    .sym-section-hdr {
+      font-size: 11px;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
+      color: var(--muted);
       padding-bottom: 7px;
       border-bottom: 1px solid var(--border);
       margin-bottom: 0;
     }
 
-    /* Member overview table (Doxygen's member listing at top of class page) */
-    .mem-table {
+    .sym-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 13px;
-      margin-top: 1px;
     }
-    .mem-table tr {
-      border-bottom: 1px solid rgba(48,54,61,.7);
-    }
-    .mem-table tr:last-child { border-bottom: none; }
-    .mem-table tr:hover { background: rgba(255,255,255,.02); }
-    .mem-table td { padding: 5px 8px; vertical-align: top; }
-    .mem-table .td-ret {
-      font-family: var(--font-mono);
-      font-size: 11.5px;
-      color: var(--muted);
-      white-space: nowrap;
-      width: 1%;
-      padding-right: 14px;
-    }
-    .mem-table .td-name {
+
+    .sym-table tr { border-bottom: 1px solid rgba(48,54,61,.7); }
+    .sym-table tr:last-child { border-bottom: none; }
+    .sym-table tr:hover { background: rgba(255,255,255,.02); }
+    .sym-table td { padding: 7px 8px; vertical-align: top; }
+
+    .sym-table .td-name {
       font-family: var(--font-mono);
       font-size: 12.5px;
+      white-space: nowrap;
+      width: 35%;
+      color: var(--text);
     }
-    .mem-table .td-name a {
-      color: var(--accent);
-      text-decoration: none;
-      font-weight: 600;
+
+    .sym-table .td-chip {
+      white-space: nowrap;
+      width: 56px;
     }
-    .mem-table .td-name a:hover { text-decoration: underline; }
-    .mem-table .td-brief {
+
+    .sym-table .td-brief {
       color: var(--muted);
       font-size: 12px;
-      padding-left: 18px;
     }
 
-    /* Index overview tables */
-    .idx-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-      margin-top: 1px;
-    }
-    .idx-table tr { border-bottom: 1px solid rgba(48,54,61,.7); }
-    .idx-table tr:last-child { border-bottom: none; }
-    .idx-table tr:hover { background: rgba(255,255,255,.02); }
-    .idx-table td { padding: 7px 8px; vertical-align: top; }
-    .idx-table .td-name {
+    .kind-chip {
+      font-size: 9.5px;
       font-family: var(--font-mono);
-      font-size: 12.5px;
-      white-space: nowrap;
-      width: 32%;
-    }
-    .idx-table .td-name a {
-      color: var(--accent);
-      text-decoration: none;
       font-weight: 600;
-    }
-    .idx-table .td-name a:hover { text-decoration: underline; }
-    .idx-table .td-chip {
-      white-space: nowrap;
-      width: 50px;
-    }
-    .idx-table .td-brief { color: var(--muted); font-size: 12px; }
-
-    /* Diamond-bullet function heading (Doxygen's ◆ style) */
-    .fn-item { margin-top: 28px; scroll-margin-top: 12px; }
-    .fn-hdr {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 0 8px;
-      border-top: 1px solid var(--border);
-    }
-    .fn-hdr .diamond { color: var(--accent); font-size: 18px; line-height: 1; }
-    .fn-hdr .fn-id   { font-family: var(--font-mono); font-size: 14px; font-weight: 700; }
-    .fn-hdr .overload-n { font-family: var(--font-mono); font-size: 11px; color: var(--muted); font-weight: 400; }
-
-    /* Signature block */
-    .fn-sig {
-      font-family: var(--font-mono);
-      font-size: 12.5px;
-      background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      border-radius: var(--radius);
-      padding: 9px 14px;
-      margin: 8px 0 12px;
-      overflow-x: auto;
-      white-space: pre;
-      line-height: 1.5;
-    }
-
-    .fn-brief { font-size: 14px; margin: 8px 0; }
-    .fn-body  { font-size: 13px; color: var(--text); margin: 8px 0; white-space: pre-wrap; }
-
-    /* Callout boxes */
-    .callout {
-      border-radius: var(--radius);
-      padding: 8px 12px;
-      font-size: 13px;
-      margin: 8px 0;
-      display: flex;
-      gap: 8px;
-      align-items: flex-start;
-    }
-    .callout-icon { font-size: 14px; flex-shrink: 0; line-height: 1.5; }
-    .callout-warn { background: #2c1f00; border-left: 3px solid #f59e0b; }
-    .callout-note { background: var(--code-bg); border-left: 3px solid var(--accent); }
-    .callout-depr { background: #2c1a1a; border-left: 3px solid #ef4444; }
-
-    /* Parameter / returns table */
-    .param-sec { margin: 12px 0; }
-    .param-title {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      margin-bottom: 5px;
-    }
-    .param-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    .param-table tr { border-bottom: 1px solid rgba(48,54,61,.5); }
-    .param-table tr:last-child { border-bottom: none; }
-    .param-table td { padding: 4px 6px 4px 0; vertical-align: top; }
-    .param-table .col-name {
-      font-family: var(--font-mono);
-      font-size: 12px;
+      background: var(--accent-dim);
       color: var(--accent);
-      white-space: nowrap;
-      min-width: 110px;
-      max-width: 180px;
-      padding-right: 16px;
+      border: 1px solid var(--accent);
+      border-radius: 3px;
+      padding: 1px 5px;
     }
-    .param-table .col-desc { color: var(--text); }
 
-    /* highlight.js integration — use our background, not hljs's */
-    .fn-sig .hljs { background: transparent !important; padding: 0 !important; }
-    .fn-sig pre   { margin: 0; }
+    /* ── Package header ──────────────────────────────────────────────────── */
+    .pkg-hdr {
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid var(--border);
+    }
 
-    /* Source link */
-    .fn-srclink {
-      font-size: 11.5px;
-      font-family: var(--font-mono);
+    .pkg-hdr h1 {
+      margin: 0 0 4px;
+      font-size: 1.4rem;
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pkg-hdr .ver { font-size: 1rem; font-weight: 400; color: var(--muted); }
+    .pkg-hdr .back { font-size: 13px; color: var(--muted); }
+    .pkg-hdr .back a { color: var(--muted); }
+    .pkg-hdr .back a:hover { color: var(--accent); text-decoration: none; }
+
+    /* ── Empty / no-docs state ───────────────────────────────────────────── */
+    .no-docs {
+      font-size: 13px;
       color: var(--muted);
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 1px dashed var(--border);
+      padding: 10px 0 0;
     }
 
-    /* Empty state */
-    .docs-empty {
-      text-align: center;
-      padding: 80px 20px;
-      color: var(--muted);
-    }
-    .docs-empty h2 { margin: 0 0 10px; font-weight: 400; }
-
-    @media (max-width: 720px) {
-      .docs-sidebar { display: none; }
-      .docs-main    { padding: 20px 16px 48px; }
+    @media (max-width: 600px) {
+      .docs-page { padding: 24px 16px 60px; }
+      .cmd-copy  { flex-wrap: wrap; }
     }
   </style>
 </head>
@@ -408,28 +202,17 @@
   </button>
 </nav>
 
-<div class="docs-shell">
-  <aside class="docs-sidebar" id="sidebar">
-    <div class="sb-search">
-      <input type="search" id="sym-search" placeholder="Filter symbols…" autocomplete="off">
-    </div>
-    <div id="sb-tree"></div>
-  </aside>
-  <div class="docs-main" id="main-content">
-    <div class="docs-main-inner">
-      <div class="loading"><div class="spinner"></div></div>
-    </div>
-  </div>
+<div class="docs-page" id="docs-page">
+  <div class="loading"><div class="spinner"></div></div>
 </div>
 
 <script src="/app.js"></script>
-<script src="/highlight.min.js"></script>
 <script>
 'use strict';
 
 const pathParts = location.pathname.split('/').filter(Boolean);
 const pkgName   = pathParts[1] ?? '';
-document.title  = `${pkgName} — API Reference`;
+document.title  = `${pkgName} — Docs`;
 
 const KIND_LABEL = {
   fn:'fn', sub:'sub', macro:'macro',
@@ -437,643 +220,12 @@ const KIND_LABEL = {
   type:'type', iface:'interface', var:'var',
   mod:'namespace', item:'item',
 };
-const KIND_LONG = {
-  fn:'Function', sub:'Subroutine', macro:'Macro',
-  struct:'Struct', class:'Class', enum:'Enum',
-  type:'Type', iface:'Interface', var:'Variable',
-  mod:'Namespace', item:'Item',
-};
-const TYPE_KINDS  = new Set(['class','struct','iface','enum','type']);
-const SPACE_KINDS = new Set(['mod']);
-const FN_KINDS    = new Set(['fn','sub','macro']);
 
-// docify lang label (DocLanguage::label()) → highlight.js language name
-const HLJS_LANG = {
-  'C':'c', 'C++':'cpp', 'Rust':'rust', 'Fortran':'fortran',
-  'D':'d', 'Ada':'ada', 'Java':'java', 'Go':'go',
-  'Kotlin':'kotlin', 'Swift':'swift', 'Zig':'plaintext',
-};
+const TYPE_KINDS = new Set(['class','struct','iface','enum','type']);
+const FN_KINDS   = new Set(['fn','sub','macro']);
 
-// label() is already the display form; kept for callers that look it up.
-const LANG_DISPLAY = {
-  'C':'C', 'C++':'C++', 'Rust':'Rust', 'Fortran':'Fortran',
-  'D':'D', 'Ada':'Ada', 'Java':'Java', 'Go':'Go',
-  'Kotlin':'Kotlin', 'Swift':'Swift', 'Zig':'Zig',
-};
-
-function hlCode(code, langVariant) {
-  if (!code) return '';
-  if (typeof hljs === 'undefined') return esc(code);
-  const lang = HLJS_LANG[langVariant] ?? 'plaintext';
-  try {
-    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-  } catch {
-    return esc(code);
-  }
-}
-
-let allItems = [];
-let pkgInfo  = null;
-let tree     = null;   // { types, membersByParent, namespaces, free }
-
-// ── Boot ───────────────────────────────────────────────────────────────────────
-
-document.addEventListener('DOMContentLoaded', async () => {
-  const wrap = document.getElementById('main-content');
-
-  try {
-    const [pkgResp, docsResp] = await Promise.all([
-      API.getPackage(pkgName),
-      fetch(`/api/v1/packages/${encodeURIComponent(pkgName)}/latest/docs`),
-    ]);
-
-    pkgInfo = pkgResp;
-    if (!pkgInfo) { setMain(`<div class="docs-empty"><h2>Package not found</h2></div>`); return; }
-
-    let docsData = null;
-    if (docsResp.ok) {
-      docsData = await docsResp.json();
-    } else if (pkgInfo.latest) {
-      const r2 = await fetch(`/api/v1/packages/${encodeURIComponent(pkgName)}/${encodeURIComponent(pkgInfo.latest)}/docs`);
-      if (r2.ok) docsData = await r2.json();
-    }
-
-    if (!docsData || !docsData.items?.length) {
-      setMain(`<div class="dox-pkg-hdr"><h1>${esc(pkgInfo.name)} <span class="ver">v${esc(pkgInfo.latest)}</span></h1>
-        <div class="meta"><a data-nav="index">← Back to package list</a></div></div>
-        <div class="docs-empty" style="padding-top:40px">
-          <h2>No API documentation uploaded</h2>
-          <p style="font-size:13px">Run <code style="font-family:var(--font-mono);background:var(--code-bg);padding:2px 6px;border-radius:3px">docify dump src/ --out docs.msgpack</code> and upload via <code style="font-family:var(--font-mono);background:var(--code-bg);padding:2px 6px;border-radius:3px">PUT /api/v1/packages/:name/:version/docs</code></p>
-        </div>`);
-      return;
-    }
-
-    allItems = docsData.items.filter(i => i.name);
-    tree = buildTree(allItems);
-    buildSidebar();
-
-    // Routing
-    window.addEventListener('popstate', route);
-    route();
-
-  } catch (err) {
-    setMain(`<div class="docs-empty"><h2>Failed to load docs</h2><p>${esc(String(err.message ?? err))}</p></div>`);
-  }
-});
-
-// ── Routing ────────────────────────────────────────────────────────────────────
-
-function route() {
-  const hash = location.hash.slice(1);
-  if (!hash) { navIndex(); return; }
-  if (hash === 'index') { navIndex(); return; }
-
-  const item = allItems.find(i => slug(i.name) === hash);
-  if (!item) { navIndex(); return; }
-
-  if (TYPE_KINDS.has(item.kind)) navClass(item.name);
-  else if (SPACE_KINDS.has(item.kind)) navNamespace(item.name);
-  else navSymbol(item);
-}
-
-function go(href) {
-  history.pushState(null, '', href);
-  route();
-}
-
-// ── Tree building ──────────────────────────────────────────────────────────────
-
-function buildTree(items) {
-  const types      = items.filter(i => TYPE_KINDS.has(i.kind));
-  const typeNames  = new Set(types.map(i => i.name));
-  // docify stores parent as short name — build short→full lookup
-  const shortToFull = {};
-  for (const t of types) shortToFull[shortName(t.name)] = t.name;
-  const namespaces = items.filter(i => SPACE_KINDS.has(i.kind) && i.name);
-
-  const membersByParent = {};
-  for (const it of items) {
-    const p = it.meta?.parent;
-    if (!p) continue;
-    const full = typeNames.has(p) ? p : shortToFull[p];
-    if (full) (membersByParent[full] ??= []).push(it);
-  }
-
-  const assignedMembers = new Set(Object.values(membersByParent).flat().map(i => i.name));
-  const free = items.filter(i => {
-    if (TYPE_KINDS.has(i.kind) || SPACE_KINDS.has(i.kind)) return false;
-    if (assignedMembers.has(i.name)) return false;
-    return true;
-  });
-
-  return { types, membersByParent, namespaces, free };
-}
-
-// ── Sidebar ────────────────────────────────────────────────────────────────────
-
-function buildSidebar() {
-  const el = document.getElementById('sb-tree');
-  el.innerHTML = '';
-
-  // Home link
-  const home = mkEl('div', 'sb-home');
-  home.innerHTML = `<span style="font-size:15px">⌂</span><span>${esc(pkgName)} API</span>`;
-  home.addEventListener('click', () => go('#index'));
-  el.appendChild(home);
-
-  const { types, membersByParent, namespaces, free } = tree;
-
-  if (types.length > 0) {
-    const sec = mkEl('div', 'sb-section');
-    sec.appendChild(sectionHeader('Classes & Types'));
-    for (const t of sorted(types)) {
-      const members = membersByParent[t.name] ?? [];
-      const row = sbNode(t, 0, members.length > 0);
-      sec.appendChild(row);
-      if (members.length > 0) {
-        const kids = mkEl('div');
-        kids.style.display = 'none';
-        kids.dataset.childOf = t.name;
-        for (const m of sorted(members)) kids.appendChild(sbNode(m, 1, false));
-        sec.appendChild(kids);
-      }
-    }
-    el.appendChild(sec);
-  }
-
-  if (namespaces.length > 0) {
-    const sec = mkEl('div', 'sb-section');
-    sec.appendChild(sectionHeader('Namespaces'));
-    for (const ns of sorted(namespaces)) sec.appendChild(sbNode(ns, 0, false));
-    el.appendChild(sec);
-  }
-
-  if (free.length > 0) {
-    const sec = mkEl('div', 'sb-section');
-    sec.appendChild(sectionHeader('Free Symbols'));
-    for (const f of sorted(free)) sec.appendChild(sbNode(f, 0, false));
-    el.appendChild(sec);
-  }
-}
-
-function sectionHeader(label) {
-  const h = mkEl('div', 'sb-section-hdr');
-  h.textContent = label;
-  return h;
-}
-
-function sbNode(item, depth, hasKids) {
-  const row = mkEl('div', 'sb-node' + (depth === 1 ? ' indent' : depth === 2 ? ' indent2' : ''));
-  row.dataset.slug = slug(item.name);
-
-  const tog = mkEl('span', 'sb-toggle');
-  if (hasKids) {
-    tog.textContent = '▶';
-    tog.addEventListener('click', e => {
-      e.stopPropagation();
-      const kids = row.nextElementSibling;
-      if (!kids) return;
-      const open = kids.style.display !== 'none';
-      kids.style.display = open ? 'none' : '';
-      tog.classList.toggle('open', !open);
-    });
-  }
-  row.appendChild(tog);
-
-  const badge = mkEl('span', 'sb-badge');
-  badge.textContent = KIND_LABEL[item.kind] ?? item.kind;
-  row.appendChild(badge);
-
-  const lbl = mkEl('span', 'sb-label');
-  lbl.textContent = shortName(item.name);
-  row.appendChild(lbl);
-
-  row.addEventListener('click', () => go(`#${slug(item.name)}`));
-  return row;
-}
-
-function filterSidebar(q) {
-  q = q.toLowerCase();
-  document.querySelectorAll('.sb-node[data-slug]').forEach(n => {
-    n.style.display = (!q || n.querySelector('.sb-label')?.textContent.toLowerCase().includes(q)) ? '' : 'none';
-  });
-  document.querySelectorAll('[data-child-of]').forEach(d => {
-    if (q) d.style.display = '';
-  });
-  document.querySelectorAll('.sb-section').forEach(s => {
-    s.style.display = [...s.querySelectorAll('.sb-node[data-slug]')].some(n => n.style.display !== 'none') ? '' : 'none';
-  });
-}
-
-document.getElementById('sym-search').addEventListener('input', e => filterSidebar(e.target.value));
-
-function setSbActive(slugVal) {
-  document.querySelectorAll('.sb-node').forEach(n => n.classList.toggle('active', n.dataset.slug === slugVal));
-}
-
-// ── Index page ─────────────────────────────────────────────────────────────────
-
-function navIndex() {
-  setSbActive(null);
-  const { types, free, namespaces } = tree;
-  let html = pkgHdrHtml();
-
-  if (types.length > 0) {
-    html += doxSec('Classes &amp; Types');
-    html += `<table class="idx-table">`;
-    for (const t of sorted(types)) {
-      html += `<tr>
-        <td class="td-name"><a data-nav="${esc(t.name)}">${esc(t.name)}</a></td>
-        <td class="td-chip">${chip(t.kind)}</td>
-        <td class="td-brief">${esc(t.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-
-  if (namespaces.length > 0) {
-    html += doxSec('Namespaces');
-    html += `<table class="idx-table">`;
-    for (const ns of sorted(namespaces)) {
-      html += `<tr>
-        <td class="td-name"><a data-nav="${esc(ns.name)}">${esc(ns.name)}</a></td>
-        <td class="td-chip">${chip(ns.kind)}</td>
-        <td class="td-brief">${esc(ns.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-
-  if (free.length > 0) {
-    html += doxSec('Free Symbols');
-    html += `<table class="idx-table">`;
-    for (const f of sorted(free)) {
-      const ret = retType(f.signature ?? '');
-      html += `<tr>
-        <td class="td-name"><a data-nav="${esc(f.name)}">${esc(shortName(f.name))}${briefParams(f.signature ?? '')}</a></td>
-        <td class="td-chip">${chip(f.kind)}</td>
-        <td class="td-brief">${esc(f.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-
-  setMain(html);
-  wireNavLinks();
-}
-
-// ── Class page ─────────────────────────────────────────────────────────────────
-
-function navClass(className) {
-  setSbActive(slug(className));
-  const classItem = allItems.find(i => i.name === className);
-  const members   = tree.membersByParent[className] ?? [];
-
-  const ctors  = members.filter(m => {
-    const sn = shortName(m.name);
-    return sn === shortName(className) || sn === `~${shortName(className)}`;
-  });
-  const fns    = members.filter(m => FN_KINDS.has(m.kind) && !ctors.includes(m));
-  const vars   = members.filter(m => m.kind === 'var');
-  const others = members.filter(m => !FN_KINDS.has(m.kind) && m.kind !== 'var');
-
-  const ns    = className.includes('::') ? className.split('::').slice(0,-1).join('::') : null;
-  const sName = shortName(className);
-
-  let html = `<div class="dox-bc">
-    <a data-nav="">API</a>
-    ${ns ? `<span class="dox-bc-sep">›</span><a data-nav="${esc(ns)}">${esc(ns)}</a>` : ''}
-    <span class="dox-bc-sep">›</span>
-    <span style="color:var(--text)">${esc(sName)}</span>
-  </div>
-  <div class="dox-page-title">
-    <span class="dox-kind-chip">${esc(KIND_LONG[classItem?.kind] ?? 'Class')}</span>
-    <h2>${esc(className)}</h2>
-    ${classItem?.lang ? `<span class="dox-page-lang">${esc(LANG_DISPLAY[classItem.lang] ?? classItem.lang)}</span>` : ''}
-  </div>
-  ${classItem?.brief ? `<p class="dox-page-brief">${esc(classItem.brief)}</p>` : ''}`;
-
-  // Class-level callouts
-  if (classItem?.tags?.length) {
-    for (const t of classItem.tags) {
-      if (t.kind === 'Note') html += callout('note', 'ℹ', t.text);
-      if (t.kind === 'Warning') html += callout('warn', '⚠', t.text);
-    }
-  }
-
-  // ── Member overview ──────────────────────────────────────────────────────
-  if (members.length > 0) {
-    html += doxSec('Public Member Functions');
-    html += `<table class="mem-table">`;
-    for (const m of [...ctors, ...fns, ...vars, ...others]) {
-      const ret = retType(m.signature ?? '');
-      html += `<tr>
-        <td class="td-ret">${esc(ret)}</td>
-        <td class="td-name"><a data-nav="${esc(m.name)}">${esc(shortName(m.name))}${briefParams(m.signature ?? '')}</a></td>
-        <td class="td-brief">${esc(m.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-
-  // ── Detailed description ─────────────────────────────────────────────────
-  if (classItem?.body) {
-    html += doxSec('Detailed Description');
-    html += `<div style="font-size:13px;margin-top:12px;white-space:pre-wrap">${esc(classItem.body)}</div>`;
-  }
-
-  // ── Constructor documentation ────────────────────────────────────────────
-  if (ctors.length > 0) {
-    html += doxSec('Constructor &amp; Destructor Documentation');
-    html += renderGroup(ctors);
-  }
-
-  // ── Member function documentation ────────────────────────────────────────
-  if (fns.length > 0) {
-    html += doxSec('Member Function Documentation');
-    html += renderGroup(fns);
-  }
-
-  // ── Member variable documentation ────────────────────────────────────────
-  if (vars.length > 0) {
-    html += doxSec('Member Variable Documentation');
-    html += renderGroup(vars);
-  }
-
-  setMain(html);
-  wireNavLinks();
-
-  // Member overview links scroll to detail within the page
-  document.querySelector('.docs-main-inner').querySelectorAll('.mem-table a[data-nav]').forEach(a => {
-    a.addEventListener('click', e => {
-      const name = a.dataset.nav;
-      const target = document.getElementById(slug(name));
-      if (target) { e.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
-    });
-  });
-}
-
-// ── Namespace page ─────────────────────────────────────────────────────────────
-
-function navNamespace(nsName) {
-  setSbActive(slug(nsName));
-  const nsItem  = allItems.find(i => i.name === nsName);
-  const members = allItems.filter(i => {
-    if (i.name === nsName) return false;
-    if (!i.name.startsWith(nsName + '::')) return false;
-    const rest = i.name.slice(nsName.length + 2);
-    return !rest.includes('::');
-  });
-
-  let html = `<div class="dox-bc">
-    <a data-nav="">API</a>
-    <span class="dox-bc-sep">›</span>
-    <span style="color:var(--text)">${esc(nsName)}</span>
-  </div>
-  <div class="dox-page-title">
-    <span class="dox-kind-chip">namespace</span>
-    <h2>${esc(nsName)}</h2>
-  </div>
-  ${nsItem?.brief ? `<p class="dox-page-brief">${esc(nsItem.brief)}</p>` : ''}`;
-
-  const types = members.filter(i => TYPE_KINDS.has(i.kind));
-  const fns   = members.filter(i => FN_KINDS.has(i.kind));
-
-  if (types.length > 0) {
-    html += doxSec('Classes &amp; Types');
-    html += `<table class="mem-table">`;
-    for (const t of sorted(types)) {
-      html += `<tr>
-        <td class="td-ret">${esc(t.kind)}</td>
-        <td class="td-name"><a data-nav="${esc(t.name)}">${esc(shortName(t.name))}</a></td>
-        <td class="td-brief">${esc(t.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-  if (fns.length > 0) {
-    html += doxSec('Functions');
-    html += `<table class="mem-table">`;
-    for (const f of sorted(fns)) {
-      html += `<tr>
-        <td class="td-ret">${esc(retType(f.signature ?? ''))}</td>
-        <td class="td-name"><a data-nav="${esc(f.name)}">${esc(shortName(f.name))}${briefParams(f.signature ?? '')}</a></td>
-        <td class="td-brief">${esc(f.brief ?? '')}</td>
-      </tr>`;
-    }
-    html += `</table>`;
-  }
-
-  setMain(html);
-  wireNavLinks();
-}
-
-// ── Single symbol page ─────────────────────────────────────────────────────────
-
-function navSymbol(item) {
-  setSbActive(slug(item.name));
-  const ns = item.name.includes('::') ? item.name.split('::').slice(0,-1).join('::') : null;
-
-  let html = `<div class="dox-bc">
-    <a data-nav="">API</a>
-    ${ns ? `<span class="dox-bc-sep">›</span><a data-nav="${esc(ns)}">${esc(ns)}</a>` : ''}
-    <span class="dox-bc-sep">›</span>
-    <span style="color:var(--text)">${esc(shortName(item.name))}</span>
-  </div>
-  <div class="dox-page-title">
-    <span class="dox-kind-chip">${esc(KIND_LONG[item.kind] ?? item.kind)}</span>
-    <h2>${esc(item.name)}</h2>
-    ${item.lang ? `<span class="dox-page-lang">${esc(LANG_DISPLAY[item.lang] ?? item.lang)}</span>` : ''}
-  </div>`;
-
-  html += fnDetail(item, null);
-  setMain(html);
-  wireNavLinks();
-}
-
-// ── Rendering helpers ──────────────────────────────────────────────────────────
-
-function renderGroup(items) {
-  // Group by short name to detect overloads
-  const byKey = {};
-  for (const it of items) {
-    const k = shortName(it.name);
-    (byKey[k] ??= []).push(it);
-  }
-  let html = '';
-  for (const overloads of Object.values(byKey)) {
-    overloads.forEach((it, idx) => {
-      const lbl = overloads.length > 1 ? `[${idx+1}/${overloads.length}]` : null;
-      html += fnDetail(it, lbl);
-    });
-  }
-  return html;
-}
-
-function fnDetail(item, overloadLabel) {
-  const s         = slug(item.name);
-  const params    = item.tags.filter(t => t.kind === 'Param');
-  const tparams   = item.tags.filter(t => t.kind === 'TParam');
-  const returns   = item.tags.find(t => t.kind === 'Return');
-  const throws    = item.tags.filter(t => ['Throws','Exception'].includes(t.kind));
-  const notes     = item.tags.filter(t => t.kind === 'Note');
-  const warns     = item.tags.filter(t => t.kind === 'Warning');
-  const depr      = item.tags.find(t => t.kind === 'Deprecated');
-  const sees      = item.tags.filter(t => t.kind === 'See');
-  const since     = item.tags.find(t => t.kind === 'Since');
-  const examples  = item.tags.filter(t => t.kind === 'Example');
-
-  let html = `<div class="fn-item" id="${esc(s)}">`;
-
-  html += `<div class="fn-hdr">
-    <span class="diamond">◆</span>
-    <span class="fn-id">${esc(shortName(item.name))}()</span>
-    ${overloadLabel ? `<span class="overload-n">${esc(overloadLabel)}</span>` : ''}
-    ${item.kind !== 'fn' ? `<span class="dox-kind-chip" style="font-size:10px">${esc(KIND_LABEL[item.kind] ?? item.kind)}</span>` : ''}
-  </div>`;
-
-  if (depr) html += callout('depr', '🚫', `Deprecated: ${depr.text}`);
-
-  if (item.signature) html += `<div class="fn-sig">${hlCode(item.signature, item.lang)}</div>`;
-  if (item.brief)     html += `<p class="fn-brief">${esc(item.brief)}</p>`;
-  if (item.body)      html += `<div class="fn-body">${esc(item.body)}</div>`;
-
-  for (const w of warns) html += callout('warn', '⚠', w.text);
-  for (const n of notes) html += callout('note', 'ℹ', n.text);
-
-  if (tparams.length > 0) html += paramSec('Template Parameters', tparams);
-  if (params.length > 0)  html += paramSec('Parameters', params);
-
-  if (returns) {
-    html += `<div class="param-sec"><div class="param-title">Returns</div>
-      <div style="font-size:13px;padding:2px 0">${esc(returns.text)}</div></div>`;
-  }
-  if (throws.length > 0) html += paramSec('Throws', throws);
-
-  for (const ex of examples) {
-    if (ex.text) {
-      html += `<div class="param-sec"><div class="param-title">Example</div>
-        <div class="fn-sig" style="margin-top:4px">${hlCode(ex.text, item.lang)}</div></div>`;
-    }
-  }
-
-  if (sees.length > 0) {
-    const links = sees.map(s2 => {
-      const t = s2.text.trim();
-      const found = allItems.find(i => i.name === t || shortName(i.name) === t);
-      return found ? `<a data-nav="${esc(found.name)}">${esc(t)}</a>` : esc(t);
-    }).join(', ');
-    html += `<div class="param-sec"><div class="param-title">See Also</div>
-      <div style="font-size:13px;padding:2px 0">${links}</div></div>`;
-  }
-
-  if (since) {
-    html += `<div class="param-sec"><div class="param-title">Since</div>
-      <div style="font-size:13px;padding:2px 0">${esc(since.text)}</div></div>`;
-  }
-
-  if (item.file && item.file !== '.') {
-    const fname = item.file.split('/').pop() ?? item.file;
-    html += `<div class="fn-srclink">${esc(fname)}:${item.line}</div>`;
-  }
-
-  html += `</div>`;
-  return html;
-}
-
-function paramSec(title, tags) {
-  let html = `<div class="param-sec"><div class="param-title">${title}</div>
-    <table class="param-table">`;
-  for (const t of tags) {
-    const name = t.name ?? t.label ?? '';
-    html += `<tr><td class="col-name">${esc(name)}</td><td class="col-desc">${esc(t.text)}</td></tr>`;
-  }
-  return html + `</table></div>`;
-}
-
-function callout(type, icon, text) {
-  return `<div class="callout callout-${esc(type)}"><span class="callout-icon">${icon}</span><span>${esc(text)}</span></div>`;
-}
-
-function doxSec(title) {
-  return `<div class="dox-sec-title">${title}</div>`;
-}
-
-function chip(kind) {
-  return `<span class="sb-badge">${esc(KIND_LABEL[kind] ?? kind)}</span>`;
-}
-
-// ── Navigation wiring ──────────────────────────────────────────────────────────
-
-function wireNavLinks() {
-  document.querySelector('.docs-main-inner').querySelectorAll('a[data-nav]').forEach(a => {
-    a.addEventListener('click', e => {
-      e.preventDefault();
-      const name = a.dataset.nav;
-      if (!name) { go('#index'); return; }
-      const item = allItems.find(i => i.name === name);
-      if (!item) return;
-      go(`#${slug(item.name)}`);
-    });
-  });
-}
-
-// ── DOM helpers ────────────────────────────────────────────────────────────────
-
-function setMain(html) {
-  const inner = document.getElementById('main-content');
-  inner.innerHTML = `<div class="docs-main-inner">${html}</div>`;
-  inner.scrollTo({ top: 0, behavior: 'instant' });
-}
-
-function mkEl(tag, cls) {
-  const el = document.createElement(tag);
-  if (cls) el.className = cls;
-  return el;
-}
-
-// ── Signature helpers ──────────────────────────────────────────────────────────
-
-function retType(sig) {
-  // Very rough: "T& ClassName::func(params)" → "T&"
-  const line = sig.replace(/\/\/.*/g, '').split('\n').pop().trim();
-  const paren = line.indexOf('(');
-  if (paren < 0) return '';
-  const before = line.slice(0, paren).trim();
-  const parts  = before.split(/\s+/);
-  if (parts.length <= 1) return '';
-  return parts.slice(0, -1).join(' ');
-}
-
-function briefParams(sig) {
-  // Return "(T, ...)" with type-only params, 2-max
-  const open  = sig.indexOf('(');
-  const close = sig.lastIndexOf(')');
-  if (open < 0 || close <= open) return '()';
-  const inner = sig.slice(open+1, close).trim();
-  if (!inner) return '()';
-  const types = inner.split(',').map(p => {
-    const toks = p.trim().split(/\s+/);
-    // Drop the last token if it looks like a param name (no * or &)
-    if (toks.length > 1 && !/[*&<>]/.test(toks[toks.length-1]) && !/^\d/.test(toks[toks.length-1]))
-      return toks.slice(0,-1).join(' ');
-    return toks.join(' ');
-  });
-  if (types.length > 3) return `(${types.slice(0,2).join(', ')}, …)`;
-  return `(${types.join(', ')})`;
-}
-
-// ── Utils ──────────────────────────────────────────────────────────────────────
-
-function pkgHdrHtml() {
-  return `<div class="dox-pkg-hdr">
-    <h1>${esc(pkgInfo.name)} <span class="ver">v${esc(pkgInfo.latest)}</span>
-      <span style="font-size:1rem;font-weight:400;color:var(--muted)">API Reference</span></h1>
-    <div class="meta">
-      <a href="/packages/${esc(pkgInfo.name)}">← Back to package</a>
-      ${pkgInfo.description ? ` · ${esc(pkgInfo.description)}` : ''}
-    </div>
-  </div>`;
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function shortName(q) {
@@ -1081,13 +233,104 @@ function shortName(q) {
   return p[p.length - 1] ?? q;
 }
 
-function slug(name) {
-  return name.replace(/[^a-zA-Z0-9_-]/g, '_');
+function chip(kind) {
+  return `<span class="kind-chip">${esc(KIND_LABEL[kind] ?? kind)}</span>`;
 }
 
 function sorted(items) {
-  return [...items].sort((a,b) => shortName(a.name).localeCompare(shortName(b.name)));
+  return [...items].sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
 }
+
+function renderSection(title, items) {
+  if (!items.length) return '';
+  let html = `<div class="sym-section">
+    <div class="sym-section-hdr">${title}</div>
+    <table class="sym-table">`;
+  for (const it of sorted(items)) {
+    html += `<tr>
+      <td class="td-name">${esc(it.name)}</td>
+      <td class="td-chip">${chip(it.kind)}</td>
+      <td class="td-brief">${esc(it.brief ?? '')}</td>
+    </tr>`;
+  }
+  html += `</table></div>`;
+  return html;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const page = document.getElementById('docs-page');
+
+  // "Browse locally" card — shown immediately, pkgName interpolated
+  const cmdText = `freight doc ${pkgName}`;
+  const localCard = `
+    <div class="local-card">
+      <h2>Interactive Documentation</h2>
+      <p>The best way to read this package's documentation is with the <code>freight doc</code> TUI
+      browser — it reads source files directly with syntax highlighting, cross-references, and
+      full-text search.</p>
+      <div class="cmd-copy">
+        <span id="cmd-text">${esc(cmdText)}</span>
+        <button class="copy-btn" id="copy-btn">Copy</button>
+      </div>
+    </div>`;
+
+  try {
+    const [pkgInfo, docsResp] = await Promise.all([
+      API.getPackage(pkgName),
+      fetch(`/api/v1/packages/${encodeURIComponent(pkgName)}/latest/docs`),
+    ]);
+
+    let pkgHdr = '';
+    if (pkgInfo) {
+      pkgHdr = `<div class="pkg-hdr">
+        <h1>${esc(pkgInfo.name)} <span class="ver">v${esc(pkgInfo.latest ?? '')}</span></h1>
+        <div class="back"><a href="/packages/${esc(pkgInfo.name)}">← Back to package</a></div>
+      </div>`;
+    }
+
+    let docsData = null;
+    if (docsResp.ok) {
+      docsData = await docsResp.json();
+    } else if (pkgInfo?.latest) {
+      const r2 = await fetch(`/api/v1/packages/${encodeURIComponent(pkgName)}/${encodeURIComponent(pkgInfo.latest)}/docs`);
+      if (r2.ok) docsData = await r2.json();
+    }
+
+    let symbolIndex = '';
+    if (docsData?.items?.length) {
+      const items = docsData.items.filter(i => i.name);
+      const types = items.filter(i => TYPE_KINDS.has(i.kind));
+      const fns   = items.filter(i => FN_KINDS.has(i.kind));
+      const vars  = items.filter(i => i.kind === 'var');
+      const rest  = items.filter(i => !TYPE_KINDS.has(i.kind) && !FN_KINDS.has(i.kind) && i.kind !== 'var');
+
+      symbolIndex = renderSection('Types', types)
+                  + renderSection('Functions', fns)
+                  + renderSection('Variables', vars)
+                  + renderSection('Other', rest);
+    } else {
+      symbolIndex = `<p class="no-docs">No symbol index uploaded. Run <code style="font-family:var(--font-mono);background:var(--code-bg);padding:1px 5px;border-radius:3px">freight doc</code> locally to browse the source.</p>`;
+    }
+
+    page.innerHTML = pkgHdr + localCard + symbolIndex;
+
+  } catch (err) {
+    page.innerHTML = localCard
+      + `<p class="no-docs">Could not load symbol index: ${esc(String(err.message ?? err))}</p>`;
+  }
+
+  // Copy button
+  const copyBtn = document.getElementById('copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(cmdText).then(() => {
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => { copyBtn.textContent = 'Copy'; copyBtn.classList.remove('copied'); }, 1800);
+      }).catch(() => {});
+    });
+  }
+});
 </script>
 </body>
 </html>

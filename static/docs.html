@@ -877,11 +877,11 @@ function buildSidebar(items, filter) {
     const pad = indent ? ' style="padding-left:' + indent + 'px"' : '';
     const overloadCount = src.filter(x => slug(x.name) === s).length;
     const overloadBadge = overloadCount > 1
-      ? `<span style="font-size:9px;color:var(--tui-hint);flex-shrink:0">×${overloadCount}</span>`
+      ? `<span style="font-size:9px;color:var(--tui-hint);flex-shrink:0">${overloadCount} ×</span>`
       : '';
     return `<a class="sidebar-entry${ac}" data-hash="${esc(s)}"${pad}>
       <span class="sidebar-entry-name">${esc(shortName(it.name))}</span>
-      ${kindBadge(it.kind)}${overloadBadge}
+      ${overloadBadge}${kindBadge(it.kind)}
     </a>`;
   }
 
@@ -1341,7 +1341,7 @@ function symbolHtml(item) {
         const overloads = members.filter(x => slug(x.name) === s);
         if (seen.has(s)) continue;
         seen.add(s);
-        const suffix = overloads.length > 1 ? ` <span style="color:var(--tui-hint);font-size:10px">[×${overloads.length}]</span>` : '';
+        const suffix = overloads.length > 1 ? ` <span style="color:var(--tui-hint);font-size:10px">${overloads.length} ×</span>` : '';
         html += `<tr>
           <td class="col-name"><a class="see-also-link" href="#${esc(s)}" style="border:none;padding:0">${esc(shortName(m.name))}</a>${suffix}</td>
           <td class="col-type">[${esc(kindLabel(m.kind))}]</td>

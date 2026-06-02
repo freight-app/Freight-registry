@@ -160,35 +160,6 @@
       padding: 6px 0 20px;
     }
 
-    .sidebar-section-hdr {
-      font-size: 9.5px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: var(--tui-section);
-      padding: 10px 14px 4px;
-      cursor: pointer;
-      user-select: none;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .sidebar-section-hdr::before {
-      content: '▾';
-      font-size: 9px;
-      color: var(--tui-hint);
-      transition: transform .15s;
-      display: inline-block;
-      width: 10px;
-    }
-    .sidebar-section-hdr.collapsed::before {
-      transform: rotate(-90deg);
-    }
-
-    .sidebar-section-body {
-      overflow: hidden;
-    }
-    .sidebar-section-body.collapsed { display: none; }
 
     .sidebar-entry {
       display: flex;
@@ -931,61 +902,48 @@ function buildSidebar(items, filter) {
     <span class="sidebar-entry-name">Overview</span>
   </a>`;
 
-  /* 1. Type items not in any namespace */
-  const typeItems = src.filter(i =>
-    TYPE_KINDS.has(i.kind) && !i.meta?.parent && !isInNamespace(i, namespaces)
-  ).sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+  /* 1. Type items not in any namespace — expandable if they have members */
+  const typeItems = src
+    .filter(i => TYPE_KINDS.has(i.kind) && !i.meta?.parent && !isInNamespace(i, namespaces))
+    .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
 
-  if (typeItems.length) {
-    const body = typeItems.map(it => {
-      const children = src
-        .filter(c => c.meta?.parent === shortName(it.name) || c.meta?.parent === it.name)
-        .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
-      if (children.length) {
-        return group(
-          `<span class="sidebar-entry-name">${esc(shortName(it.name))}</span>${kindBadge(it.kind)}`,
-          children, slug(it.name)
-        );
-      }
-      return entry(it, 0);
-    }).join('');
-    html += section('Classes & Types', body);
+  for (const it of typeItems) {
+    const children = src
+      .filter(c => c.meta?.parent === shortName(it.name) || c.meta?.parent === it.name)
+      .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+    if (children.length) {
+      html += group(
+        `<span class="sidebar-entry-name">${esc(shortName(it.name))}</span>${kindBadge(it.kind)}`,
+        children, slug(it.name)
+      );
+    } else {
+      html += entry(it, 0);
+    }
   }
 
-  /* 2. Namespaces */
-  if (namespaces.length) {
-    const body = namespaces.map(ns => {
-      const nsItem = src.find(i => i.name === ns && NS_KINDS.has(i.kind));
-      const children = itemsInNs(src, ns)
-        .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
-      const headHash = nsItem ? slug(nsItem.name) : slug(ns);
-      const label = `<span class="sidebar-entry-name">${esc(ns)}</span>${kindBadge('Module')}`;
-      if (!children.length) {
-        const ac = cur === headHash ? ' active' : '';
-        return `<a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">${label}</a>`;
-      }
-      return group(label, children, headHash);
-    }).join('');
-    html += section('Namespaces', body);
+  /* 2. Namespaces — expandable, showing their members */
+  for (const ns of namespaces) {
+    const nsItem   = src.find(i => i.name === ns && NS_KINDS.has(i.kind));
+    const children = itemsInNs(src, ns)
+      .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+    const headHash = nsItem ? slug(nsItem.name) : slug(ns);
+    const label    = `<span class="sidebar-entry-name">${esc(ns)}</span>${kindBadge('Module')}`;
+    if (!children.length) {
+      const ac = cur === headHash ? ' active' : '';
+      html += `<a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">${label}</a>`;
+    } else {
+      html += group(label, children, headHash);
+    }
   }
 
-  /* 3. Free symbols — not type, not namespace kind, not in namespace, not class member */
-  const free = src.filter(i =>
-    !TYPE_KINDS.has(i.kind) &&
-    !NS_KINDS.has(i.kind) &&
-    !i.meta?.parent &&
-    !isInNamespace(i, namespaces)
-  ).sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+  /* 3. Free symbols — not type, not namespace, not a class member, not in a namespace */
+  const free = src
+    .filter(i => !TYPE_KINDS.has(i.kind) && !NS_KINDS.has(i.kind)
+              && !i.meta?.parent && !isInNamespace(i, namespaces))
+    .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
 
-  /* Sub-group free symbols by kind for readability */
-  const freeByKind = [
-    ['Functions',  free.filter(i => FN_KINDS.has(i.kind))],
-    ['Variables',  free.filter(i => i.kind === 'Variable')],
-    ['Other',      free.filter(i => !FN_KINDS.has(i.kind) && i.kind !== 'Variable')],
-  ];
-  for (const [title, group_items] of freeByKind) {
-    if (!group_items.length) continue;
-    html += section(title, group_items.map(i => entry(i, 0)).join(''));
+  for (const it of free) {
+    html += entry(it, 0);
   }
 
   tree.innerHTML = html;
@@ -996,16 +954,7 @@ function buildSidebar(items, filter) {
     el.addEventListener('click', e => {
       e.preventDefault();
       navigateTo(el.dataset.hash);
-      const gm = el.closest('.sidebar-group-members');
-      if (gm) gm.classList.remove('collapsed');
-    });
-  });
-
-  tree.querySelectorAll('.sidebar-section-hdr').forEach(el => {
-    el.addEventListener('click', () => {
-      const body = tree.querySelector(`[data-section-body="${el.dataset.section}"]`);
-      el.classList.toggle('collapsed');
-      body?.classList.toggle('collapsed');
+      el.closest('.sidebar-group-members')?.classList.remove('collapsed');
     });
   });
 

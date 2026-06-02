@@ -652,6 +652,10 @@ function buildDepGraph(rootName, depsMap, container) {
     if (floatCancel) { floatCancel(); floatCancel = null; }
     if (id !== rootName) location.href = `/packages/${encodeURIComponent(id)}`;
   });
+
+  /* Re-fit whenever the canvas is resized (sidebar open/close, window resize). */
+  const ro = new ResizeObserver(() => cy.fit(cy.nodes(), 28));
+  ro.observe(container);
 }
 
 function depStartForce(cy) {

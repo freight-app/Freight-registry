@@ -1,17 +1,21 @@
 /* ── Freight Registry — shared styles ─────────────────────────────────────── */
 
 :root {
-  --bg:         #0d1117;
-  --surface:    #161b22;
-  --border:     #30363d;
-  --text:       #e6edf3;
-  --muted:      #8b949e;
-  --accent:     #f78166;       /* freight orange-red */
-  --accent-dim: #3d1f1a;
-  --green:      #3fb950;
-  --code-bg:    #1f2937;
-  --radius:     6px;
-  --font-mono:  "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --bg:         rgb(13,14,20);
+  --surface:    rgb(20,22,30);
+  --border:     rgb(80,80,100);
+  --text:       rgb(200,210,220);
+  --muted:      rgb(100,100,110);
+  --accent:     rgb(120,160,220);   /* TUI active blue */
+  --accent-dim: rgba(120,160,220,0.12);
+  --green:      rgb(152,195,121);   /* OneDark green */
+  --pkg-gold:   rgb(220,200,120);   /* TUI package name gold */
+  --section:    rgb(140,140,180);   /* TUI section blue-gray */
+  --kind:       rgb(130,170,130);   /* TUI kind badge green */
+  --code-bg:    rgb(15,17,24);
+  --radius:     4px;
+  --font-mono:  'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace,
+                "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -22,8 +26,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  font-size: 15px;
+  font-family: var(--font-mono);
+  font-size: 14px;
   line-height: 1.6;
   min-height: 100vh;
   display: flex;
@@ -128,7 +132,7 @@ main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 10
   font-size: 2.4rem;
   font-weight: 800;
   margin: 0 0 12px;
-  background: linear-gradient(90deg, var(--text) 60%, var(--accent));
+  background: linear-gradient(90deg, var(--text) 40%, var(--pkg-gold));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -199,7 +203,7 @@ main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 10
 .pkg-name {
   font-weight: 700;
   font-size: 16px;
-  color: var(--accent);
+  color: var(--pkg-gold);
   margin: 0 0 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -235,11 +239,11 @@ main { flex: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; width: 10
   color: var(--muted);
 }
 
-.badge.version { border-color: var(--accent-dim); color: var(--accent); }
-.badge.channel { border-color: #1b3a5c; color: #58a6ff; }
+.badge.version { border-color: rgba(120,160,220,0.3); color: var(--accent); }
+.badge.channel { border-color: rgba(120,160,220,0.25); color: var(--accent); }
 .badge.keyword  { border-color: var(--border); }
-.badge.dl       { color: var(--green); border-color: #1a3b25; }
-.badge.lang     { border-color: #2a2a1a; color: #d4a011; }
+.badge.dl       { color: var(--green); border-color: rgba(152,195,121,0.25); }
+.badge.lang     { border-color: rgba(220,200,120,0.25); color: var(--pkg-gold); }
 
 /* ── Package detail page ──────────────────────────────────────────────────── */
 
@@ -444,7 +448,7 @@ tr:hover td { background: var(--surface); }
   color: var(--muted);
 }
 
-.error { color: #f85149; }
+.error { color: rgb(224,108,117); }
 
 .spinner {
   display: inline-block;
@@ -468,7 +472,7 @@ tr:hover td { background: var(--surface); }
 }
 
 .stat { text-align: center; }
-.stat-val { font-size: 2rem; font-weight: 800; color: var(--accent); display: block; }
+.stat-val { font-size: 2rem; font-weight: 800; color: var(--pkg-gold); display: block; }
 .stat-lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 
 /* ── Footer ───────────────────────────────────────────────────────────────── */
@@ -573,15 +577,15 @@ footer a:hover { color: var(--text); }
 
 .btn-danger {
   background: transparent;
-  color: #f85149;
-  border: 1px solid #30363d;
+  color: rgb(224,108,117);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 6px 14px;
   font-size: 13px;
   cursor: pointer;
   transition: background .15s, border-color .15s;
 }
-.btn-danger:hover  { background: #3d1212; border-color: #f85149; }
+.btn-danger:hover  { background: rgba(224,108,117,0.1); border-color: rgb(224,108,117); }
 .btn-danger.btn-sm { padding: 3px 10px; font-size: 12px; }
 
 .auth-footer {
@@ -591,17 +595,17 @@ footer a:hover { color: var(--text); }
 }
 
 .msg-err {
-  background: #2d1212;
-  border: 1px solid #f85149;
-  color: #f85149;
+  background: rgba(224,108,117,0.08);
+  border: 1px solid rgba(224,108,117,0.35);
+  color: rgb(224,108,117);
   border-radius: var(--radius);
   padding: 10px 14px;
   font-size: 13px;
   margin-bottom: 16px;
 }
 .msg-ok {
-  background: #0d2a16;
-  border: 1px solid var(--green);
+  background: rgba(152,195,121,0.08);
+  border: 1px solid rgba(152,195,121,0.35);
   color: var(--green);
   border-radius: var(--radius);
   padding: 10px 14px;
@@ -641,21 +645,21 @@ footer a:hover { color: var(--text); }
 
 .support-yes {
   color: var(--green);
-  border-color: #1a3b25;
-  background: #0d2a16;
+  border-color: rgba(152,195,121,0.25);
+  background: rgba(152,195,121,0.06);
 }
 
 .support-no {
-  color: #f85149;
-  border-color: #3d1212;
-  background: #1c0a0a;
+  color: rgb(224,108,117);
+  border-color: rgba(224,108,117,0.25);
+  background: rgba(224,108,117,0.06);
 }
 
 /* ── Prebuilts ────────────────────────────────────────────────────────────── */
 
 .prebuilt-list { display: flex; flex-direction: column; gap: 8px; }
 .prebuilt-row  { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.badge.prebuilt { font-family: var(--font-mono); font-size: 12px; border-color: #1b3a5c; color: #58a6ff; }
+.badge.prebuilt { font-family: var(--font-mono); font-size: 12px; border-color: rgba(120,160,220,0.3); color: var(--accent); }
 
 /* ── Version highlight ────────────────────────────────────────────────────── */
 

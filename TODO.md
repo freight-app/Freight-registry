@@ -45,3 +45,4 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 - [x] Dependencies stored and served per version
 - [x] README stored on disk and served via `/api/v1/packages/:name/readme`
 - [x] Prebuilt filter by arch/os/backend query params
+- [x] Web documentation viewer (`docs.html`) — full symbol browser matching `freight doc` TUI grouping and palette; syntax highlighting via highlight.js; sidebar shows source link + owner chips; all docify tag types rendered (tparams, params, returns, retvals, throws, notes, warnings, examples, deprecated, since, see-also)

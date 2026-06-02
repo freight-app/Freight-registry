@@ -220,12 +220,11 @@
       font-size: 11px;
     }
     .sidebar-group-toggle {
-      font-size: 8px;
+      font-size: 9px;
       color: var(--tui-hint);
       flex-shrink: 0;
-      transition: transform .12s;
+      width: 10px;
     }
-    .sidebar-group.open .sidebar-group-toggle { transform: rotate(90deg); }
 
     /* ── Detail panel ──────────────────────────────────────────────────────── */
     #docs-detail {
@@ -887,12 +886,13 @@ function buildSidebar(items, filter) {
    * isOpen: force open if a descendant is currently active.
    */
   function group(header, headHash, childHtml, isOpen) {
-    const ac = cur === headHash ? ' active' : '';
-    const open = isOpen ? ' open' : '';
-    const cm   = isOpen ? '' : ' collapsed';
-    return `<div class="sidebar-group${open}">
+    const ac     = cur === headHash ? ' active' : '';
+    const openCls = isOpen ? ' open' : '';
+    const cm      = isOpen ? '' : ' collapsed';
+    const arrow   = isOpen ? '▼' : '▶';
+    return `<div class="sidebar-group${openCls}">
       <a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">
-        <span class="sidebar-group-toggle">▶</span>
+        <span class="sidebar-group-toggle">${arrow}</span>
         ${header}
       </a>
       <div class="sidebar-group-members${cm}">${childHtml}</div>
@@ -997,10 +997,13 @@ function buildSidebar(items, filter) {
   tree.querySelectorAll('.sidebar-group > .sidebar-entry').forEach(el => {
     el.addEventListener('click', () => {
       const grp     = el.closest('.sidebar-group');
-      const members = grp?.querySelector('.sidebar-group-members');
+      const members = grp?.querySelector(':scope > .sidebar-group-members');
+      const toggle  = el.querySelector('.sidebar-group-toggle');
       if (members) {
+        const opening = members.classList.contains('collapsed');
         members.classList.toggle('collapsed');
         grp.classList.toggle('open');
+        if (toggle) toggle.textContent = opening ? '▼' : '▶';
       }
     });
   });

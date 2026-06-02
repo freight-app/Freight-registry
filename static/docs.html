@@ -210,6 +210,15 @@
     }
     .sidebar-group-members .sidebar-entry:hover { color: var(--tui-symbol); }
     .sidebar-group-members .sidebar-entry.active { color: var(--tui-active); }
+    /* depth-3: members of a type inside a namespace */
+    .sidebar-group-members .sidebar-group > .sidebar-entry {
+      padding-left: 30px;
+      font-size: 11.5px;
+    }
+    .sidebar-group-members .sidebar-group-members .sidebar-entry {
+      padding-left: 44px;
+      font-size: 11px;
+    }
     .sidebar-group-toggle {
       font-size: 8px;
       color: var(--tui-hint);
@@ -873,20 +882,42 @@ function buildSidebar(items, filter) {
     </a>`;
   }
 
-  /* helper: collapsible group (class or namespace) */
-  function group(header, children, headHash) {
-    const ac  = cur === headHash ? ' active' : '';
-    const open = children.some(c => slug(c.name) === cur) ? ' open' : '';
-    const cm   = open ? '' : ' collapsed';
+  /**
+   * Collapsible group. childHtml is pre-rendered HTML for the body.
+   * isOpen: force open if a descendant is currently active.
+   */
+  function group(header, headHash, childHtml, isOpen) {
+    const ac = cur === headHash ? ' active' : '';
+    const open = isOpen ? ' open' : '';
+    const cm   = isOpen ? '' : ' collapsed';
     return `<div class="sidebar-group${open}">
       <a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">
         <span class="sidebar-group-toggle">▶</span>
         ${header}
       </a>
-      <div class="sidebar-group-members${cm}">
-        ${children.map(c => entry(c, 30)).join('')}
-      </div>
+      <div class="sidebar-group-members${cm}">${childHtml}</div>
     </div>`;
+  }
+
+  /**
+   * Render children of a namespace. Type items that have class members
+   * get a nested expandable sub-group (depth 2); everything else is a leaf.
+   */
+  function nsChildrenHtml(children) {
+    return children.map(c => {
+      if (TYPE_KINDS.has(c.kind)) {
+        const members = src
+          .filter(m => m.meta?.parent === shortName(c.name) || m.meta?.parent === c.name)
+          .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+        if (members.length) {
+          const membersHtml = members.map(m => entry(m, 44)).join('');
+          const label = `<span class="sidebar-entry-name">${esc(shortName(c.name))}</span>${kindBadge(c.kind)}`;
+          const anyMemberActive = members.some(m => slug(m.name) === cur);
+          return group(label, slug(c.name), membersHtml, anyMemberActive || cur === slug(c.name));
+        }
+      }
+      return entry(c, 30);
+    }).join('');
   }
 
   /* helper: collapsible section */
@@ -912,9 +943,12 @@ function buildSidebar(items, filter) {
       .filter(c => c.meta?.parent === shortName(it.name) || c.meta?.parent === it.name)
       .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
     if (children.length) {
+      const anyActive = children.some(c => slug(c.name) === cur);
       html += group(
         `<span class="sidebar-entry-name">${esc(shortName(it.name))}</span>${kindBadge(it.kind)}`,
-        children, slug(it.name)
+        slug(it.name),
+        children.map(c => entry(c, 30)).join(''),
+        anyActive || cur === slug(it.name)
       );
     } else {
       html += entry(it, 0);
@@ -932,7 +966,9 @@ function buildSidebar(items, filter) {
       const ac = cur === headHash ? ' active' : '';
       html += `<a class="sidebar-entry${ac}" data-hash="${esc(headHash)}">${label}</a>`;
     } else {
-      html += group(label, children, headHash);
+      const anyActive = children.some(c => slug(c.name) === cur
+        || src.filter(m => m.meta?.parent === shortName(c.name)).some(m => slug(m.name) === cur));
+      html += group(label, headHash, nsChildrenHtml(children), anyActive || cur === headHash);
     }
   }
 

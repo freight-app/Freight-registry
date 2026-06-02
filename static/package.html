@@ -5,7 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Freight Registry</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/highlight.min.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    .hljs { background: transparent !important; color: rgb(200,210,220); }
+    .hljs-keyword, .hljs-selector-tag  { color: rgb(198,120,221); }
+    .hljs-string, .hljs-attr           { color: rgb(152,195,121); }
+    .hljs-number, .hljs-literal        { color: rgb(229,192,123); }
+    .hljs-comment, .hljs-quote         { color: rgb(92,99,112); font-style: italic; }
+    .hljs-title, .hljs-name            { color: rgb(97,175,239); }
+    .hljs-type, .hljs-built_in         { color: rgb(229,192,123); }
+    .hljs-operator, .hljs-variable     { color: rgb(180,180,200); }
+  </style>
 </head>
 <body>
 
@@ -49,6 +60,7 @@
 </footer>
 
 <script src="/app.js"></script>
+<script src="/highlight.min.js"></script>
 <script>
 'use strict';
 
@@ -77,10 +89,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadPackage(name, channel, selectedVersion) {
   const main = document.getElementById('main');
   try {
-    const [pkg, owners] = await Promise.all([
+    const [pkg, owners, docsResp] = await Promise.all([
       API.getPackage(name, channel),
       API.getOwners(name),
+      fetch(`/api/v1/packages/${encodeURIComponent(name)}/latest/docs`),
     ]);
+    const hasDocs = docsResp.ok;
 
     if (!pkg) {
       main.innerHTML = `
@@ -191,7 +205,6 @@ async function loadPackage(name, channel, selectedVersion) {
           ${latest.build_system ? `<span class="badge">${esc(latest.build_system)}</span>` : ''}
           ${totalDownloads ? `<span class="badge dl">↓ ${fmtNum(totalDownloads)} total</span>` : ''}
           ${kwHtml}
-          <a href="/packages/${esc(name)}/docs" class="badge" style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent)" title="Browse documentation">Docs</a>
         </div>
       </div>
 
@@ -251,6 +264,9 @@ async function loadPackage(name, channel, selectedVersion) {
               ${latest.upstream_url ? `<li><span class="label">Archive</span>
                 <a href="${esc(latest.upstream_url)}" target="_blank" class="meta-value meta-link">tarball ↗</a>
               </li>` : ''}
+              ${hasDocs ? `<li><span class="label">Docs</span>
+                <a href="/packages/${esc(name)}/docs" class="meta-link" style="color:var(--accent)">Browse ↗</a>
+              </li>` : ''}
             </ul>
           </div>
 
@@ -309,6 +325,7 @@ async function loadPackage(name, channel, selectedVersion) {
       </div>`;
 
     if (depEntries.length > 0) initDepGraph(name, channel);
+    if (typeof hljs !== 'undefined') hljs.highlightAll();
   } catch (err) {
     main.innerHTML = `<div class="error">Failed to load package: ${esc(err.message)}</div>`;
   }

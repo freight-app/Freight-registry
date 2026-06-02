@@ -885,16 +885,6 @@ function buildSidebar(items, filter) {
     </a>`;
   }
 
-  /* For the sidebar, deduplicate items by slug so overloads show as one entry. */
-  function dedupBySlug(items) {
-    const seen = new Set();
-    return items.filter(i => {
-      const s = slug(i.name);
-      if (seen.has(s)) return false;
-      seen.add(s);
-      return true;
-    });
-  }
 
   /**
    * Collapsible group. childHtml is pre-rendered HTML for the body.
@@ -1043,6 +1033,16 @@ function tagKind(tag) {
 
 function tagsOf(item, kind) {
   return (item.tags ?? []).filter(t => tagKind(t) === kind);
+}
+
+function dedupBySlug(items) {
+  const seen = new Set();
+  return items.filter(i => {
+    const s = slug(i.name);
+    if (seen.has(s)) return false;
+    seen.add(s);
+    return true;
+  });
 }
 
 /**
@@ -1323,6 +1323,32 @@ function symbolHtml(item) {
       } else {
         html += codeBlock(t, langVariant);
       }
+    }
+  }
+
+  /* Namespace summary — all items whose name starts with this namespace prefix */
+  if (NS_KINDS.has(item.kind) && item.name) {
+    const pfxCC  = item.name + '::';
+    const pfxDot = item.name + '.';
+    const nsItems = dedupBySlug(
+      allItems
+        .filter(i => !NS_KINDS.has(i.kind) && !i.meta?.parent
+                  && (i.name.startsWith(pfxCC) || i.name.startsWith(pfxDot)))
+        .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)))
+    );
+    if (nsItems.length) {
+      html += divider() + sectionLabel('Contents');
+      html += `<table class="param-table"><thead><tr><th>Name</th><th>Kind</th><th>Description</th></tr></thead><tbody>`;
+      for (const m of nsItems) {
+        const s = slug(m.name);
+        const overloads = allItems.filter(x => slug(x.name) === s);
+        const suffix = overloads.length > 1 ? ` <span style="color:var(--tui-hint);font-size:10px">${overloads.length} ×</span>` : '';
+        html += `<tr>
+          <td class="col-name"><a class="see-also-link" href="#${esc(s)}" style="border:none;padding:0">${esc(shortName(m.name))}</a>${suffix}</td>
+          <td class="col-type">[${esc(kindLabel(m.kind))}]</td>
+          <td class="col-desc">${esc(m.brief ?? '')}</td></tr>`;
+      }
+      html += `</tbody></table>`;
     }
   }
 

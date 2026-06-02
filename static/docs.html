@@ -533,6 +533,48 @@
     }
     .copy-btn:hover { color: var(--tui-active); border-color: var(--tui-active); }
 
+    /* ── Deprecated / warning / note banners ──────────────────────────────── */
+    .tag-deprecated {
+      background: rgba(224,108,117,0.1);
+      border: 1px solid rgba(224,108,117,0.35);
+      border-left: 3px solid rgb(224,108,117);
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12.5px;
+      color: rgb(224,108,117);
+      margin: 0 0 16px;
+    }
+    .tag-warning {
+      background: rgba(229,192,123,0.08);
+      border: 1px solid rgba(229,192,123,0.3);
+      border-left: 3px solid rgb(229,192,123);
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12.5px;
+      color: rgb(229,192,123);
+      margin: 6px 0;
+    }
+    .tag-note {
+      background: rgba(97,175,239,0.07);
+      border: 1px solid rgba(97,175,239,0.25);
+      border-left: 3px solid rgb(97,175,239);
+      border-radius: 4px;
+      padding: 8px 14px;
+      font-size: 12.5px;
+      color: rgb(180,200,220);
+      margin: 6px 0;
+    }
+    .tag-since {
+      display: inline-block;
+      background: rgba(130,170,130,0.12);
+      border: 1px solid rgba(130,170,130,0.25);
+      border-radius: 3px;
+      padding: 1px 8px;
+      font-size: 11px;
+      color: var(--tui-kind);
+      margin: 0 0 14px;
+    }
+
     /* ── No docs state ─────────────────────────────────────────────────────── */
     .no-docs-msg {
       font-size: 13px;
@@ -884,6 +926,69 @@ function buildSidebar(items, filter) {
   });
 }
 
+/* ── Tag helpers ────────────────────────────────────────────────────────────── */
+
+/**
+ * Normalise a DocTag.kind to a lowercase string.
+ * kind is either a plain string ("Param", "Return", …) or {"Other": "tparam"}.
+ */
+function tagKind(tag) {
+  if (!tag?.kind) return '';
+  if (typeof tag.kind === 'string') return tag.kind.toLowerCase();
+  if (typeof tag.kind === 'object' && tag.kind.Other) return tag.kind.Other.toLowerCase();
+  return '';
+}
+
+function tagsOf(item, kind) {
+  return (item.tags ?? []).filter(t => tagKind(t) === kind);
+}
+
+/**
+ * Map a serialised DocLanguage variant ("Cpp", "C", "Rust", …) to a
+ * highlight.js language tag and a human-readable display label.
+ */
+const LANG_MAP = {
+  C:          { hl: 'c',          label: 'C'          },
+  Cpp:        { hl: 'cpp',        label: 'C++'        },
+  Rust:       { hl: 'rust',       label: 'Rust'       },
+  Fortran:    { hl: 'fortran',    label: 'Fortran'    },
+  D:          { hl: 'd',          label: 'D'          },
+  Ada:        { hl: 'ada',        label: 'Ada'        },
+  Java:       { hl: 'java',       label: 'Java'       },
+  Go:         { hl: 'go',         label: 'Go'         },
+  Zig:        { hl: 'zig',        label: 'Zig'        },
+  Kotlin:     { hl: 'kotlin',     label: 'Kotlin'     },
+  Swift:      { hl: 'swift',      label: 'Swift'      },
+  Python:     { hl: 'python',     label: 'Python'     },
+  TypeScript: { hl: 'typescript', label: 'TypeScript' },
+  JavaScript: { hl: 'javascript', label: 'JavaScript' },
+  CSharp:     { hl: 'csharp',     label: 'C#'         },
+  Php:        { hl: 'php',        label: 'PHP'        },
+  Ruby:       { hl: 'ruby',       label: 'Ruby'       },
+  Lua:        { hl: 'lua',        label: 'Lua'        },
+  R:          { hl: 'r',          label: 'R'          },
+  Haskell:    { hl: 'haskell',    label: 'Haskell'    },
+};
+
+function langInfo(langVariant) {
+  return LANG_MAP[langVariant] ?? { hl: null, label: langVariant ?? '' };
+}
+
+function codeBlock(code, langVariant) {
+  const { hl, label } = langInfo(langVariant);
+  const dashes = '─'.repeat(Math.max(2, 30 - label.length));
+  const header = label
+    ? `<div class="code-block-header">─── ${esc(label)} ${dashes}</div>`
+    : `<div class="code-block-header">─────────────────────────────────</div>`;
+  return `<div class="code-block-wrap">${header}<pre><code>${hlCode(code, hl)}</code></pre></div>`;
+}
+
+function sectionLabel(text) {
+  return `<div class="detail-section-label">${esc(text)}</div>`;
+}
+
+function divider() { return `<hr class="detail-divider">`; }
+
 /* ── Detail rendering ───────────────────────────────────────────────────────── */
 
 function renderIndex() {
@@ -939,10 +1044,10 @@ function renderIndex() {
   if (counts.ns)     html += countCard(counts.ns, 'Namespaces');
   html += `</div>`;
 
-  /* README if present */
-  const readme = docsData?.readme;
+  /* README — from docs data or package info */
+  const readme = docsData?.readme ?? pkgInfo?.readme;
   if (readme) {
-    html += `<div class="detail-section-label">Readme</div>`;
+    html += sectionLabel('README');
     html += `<div class="detail-body">${renderMarkdown(readme)}</div>`;
   }
 
@@ -969,96 +1074,164 @@ function wireLocalCard(cmdText) {
 
 function renderSymbol(item) {
   const detail = document.getElementById('docs-detail');
+  const langVariant = item.lang ?? item.language ?? 'Cpp';
+  const tags = item.tags ?? [];
+
+  const params     = tagsOf(item, 'param');
+  const tparams    = tagsOf(item, 'tparam');
+  const returns    = tagsOf(item, 'return');
+  const retvals    = tagsOf(item, 'retval');
+  const throws     = tagsOf(item, 'throws').concat(tagsOf(item, 'throw').concat(tagsOf(item, 'exception')));
+  const notes      = tagsOf(item, 'note');
+  const warnings   = tagsOf(item, 'warning');
+  const examples   = tagsOf(item, 'example');
+  const seeAlso    = tagsOf(item, 'see');
+  const sinceTag   = tagsOf(item, 'since');
+  const deprecated = tagsOf(item, 'deprecated');
+
   let html = '';
 
-  /* Symbol header */
-  html += `<div class="detail-sym-name">
-    ${esc(item.name)}
-    ${detailKindBadge(item.kind)}
-  </div>`;
+  /* Deprecated banner */
+  if (deprecated.length) {
+    html += `<div class="tag-deprecated">⚠ Deprecated — ${esc(deprecated[0].text)}</div>`;
+  }
 
+  /* Symbol header */
+  html += `<div class="detail-sym-name">${esc(item.name)}${detailKindBadge(item.kind)}</div>`;
+
+  /* Since badge */
+  if (sinceTag.length) {
+    html += `<span class="tag-since">since ${esc(sinceTag[0].text)}</span>`;
+  }
+
+  /* Brief */
   if (item.brief) {
     html += `<div class="detail-brief">${esc(item.brief)}</div>`;
   }
 
-  /* Signature / prototype */
-  if (item.signature || item.proto) {
-    const sig = item.signature ?? item.proto;
-    const lang = item.language ?? item.lang ?? 'cpp';
-    const dashes = '─'.repeat(Math.max(2, 30 - lang.length));
-    html += `<div class="code-block-wrap">
-      <div class="code-block-header">─── ${esc(lang)} ${dashes}</div>
-      <pre><code>${hlCode(sig, lang)}</code></pre>
-    </div>`;
+  /* Signature */
+  if (item.signature) {
+    html += codeBlock(item.signature, langVariant);
   }
 
   /* Body markdown */
-  if (item.body || item.doc) {
-    html += `<hr class="detail-divider">`;
-    html += `<div class="detail-body">${renderMarkdown(item.body ?? item.doc)}</div>`;
+  if (item.body) {
+    html += divider();
+    html += `<div class="detail-body">${renderMarkdown(item.body)}</div>`;
+  }
+
+  /* Template parameters */
+  if (tparams.length) {
+    html += divider() + sectionLabel('Template Parameters');
+    html += `<table class="param-table"><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>`;
+    for (const p of tparams) {
+      html += `<tr><td class="col-name">${esc(p.name ?? '')}</td>
+               <td class="col-desc">${esc(p.text)}</td></tr>`;
+    }
+    html += `</tbody></table>`;
   }
 
   /* Parameters */
-  const params = item.params ?? item.parameters ?? [];
   if (params.length) {
-    html += `<hr class="detail-divider">`;
-    html += `<div class="detail-section-label">Parameters</div>`;
-    html += `<table class="param-table">
-      <thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>`;
+    html += divider() + sectionLabel('Parameters');
+    html += `<table class="param-table"><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>`;
     for (const p of params) {
-      html += `<tr>
-        <td class="col-name">${esc(p.name ?? '')}</td>
-        <td class="col-type">${esc(p.type ?? p.kind ?? '')}</td>
-        <td class="col-desc">${esc(p.desc ?? p.brief ?? p.description ?? '')}</td>
-      </tr>`;
+      html += `<tr><td class="col-name">${esc(p.name ?? '')}</td>
+               <td class="col-desc">${esc(p.text)}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
 
   /* Returns */
-  if (item.returns || item.return_type) {
-    html += `<hr class="detail-divider">`;
-    html += `<div class="detail-section-label">Returns</div>`;
-    const retText = typeof item.returns === 'string' ? item.returns : (item.return_type ?? '');
-    html += `<div class="detail-returns">${esc(retText)}</div>`;
+  if (returns.length) {
+    html += divider() + sectionLabel('Returns');
+    for (const r of returns) {
+      html += `<div class="detail-returns">${esc(r.text)}</div>`;
+    }
   }
 
-  /* Members (class/struct) */
+  /* Retvals — named return value table */
+  if (retvals.length) {
+    html += divider() + sectionLabel('Return Values');
+    html += `<table class="param-table"><thead><tr><th>Value</th><th>Description</th></tr></thead><tbody>`;
+    for (const r of retvals) {
+      html += `<tr><td class="col-name">${esc(r.name ?? '')}</td>
+               <td class="col-desc">${esc(r.text)}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  /* Throws */
+  if (throws.length) {
+    html += divider() + sectionLabel('Throws');
+    html += `<table class="param-table"><thead><tr><th>Exception</th><th>Condition</th></tr></thead><tbody>`;
+    for (const t of throws) {
+      html += `<tr><td class="col-name">${esc(t.name ?? '')}</td>
+               <td class="col-desc">${esc(t.text)}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  /* Notes */
+  for (const n of notes) {
+    html += `<div class="tag-note"><strong>Note:</strong> ${esc(n.text)}</div>`;
+  }
+
+  /* Warnings */
+  for (const w of warnings) {
+    html += `<div class="tag-warning"><strong>Warning:</strong> ${esc(w.text)}</div>`;
+  }
+
+  /* Examples */
+  if (examples.length) {
+    html += divider() + sectionLabel('Examples');
+    for (const ex of examples) {
+      /* If text looks like a code block, render it; otherwise markdown */
+      if (ex.text.trim().startsWith('```') || ex.text.trim().startsWith('~~~')) {
+        html += `<div class="detail-body">${renderMarkdown(ex.text)}</div>`;
+      } else {
+        html += codeBlock(ex.text, langVariant);
+      }
+    }
+  }
+
+  /* Members (class/struct/namespace) */
   const members = allItems.filter(c => {
-    const parent = c.name.includes('::') ? c.name.slice(0, c.name.lastIndexOf('::')) : null;
-    return parent === item.name;
+    const parent = c.name.includes('::') ? c.name.slice(0, c.name.lastIndexOf('::'))
+                 : c.name.includes('.')  ? c.name.slice(0, c.name.lastIndexOf('.'))
+                 : (c.meta?.parent ?? null);
+    return parent === item.name || c.meta?.parent === shortName(item.name);
   });
   if (members.length) {
-    html += `<hr class="detail-divider">`;
-    html += `<div class="detail-section-label">Members</div>`;
-    html += `<table class="param-table">
-      <thead><tr><th>Name</th><th>Kind</th><th>Description</th></tr></thead><tbody>`;
+    html += divider() + sectionLabel('Members');
+    html += `<table class="param-table"><thead><tr><th>Name</th><th>Kind</th><th>Description</th></tr></thead><tbody>`;
     for (const m of members.sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)))) {
       html += `<tr>
         <td class="col-name"><a class="see-also-link" href="#${esc(slug(m.name))}" style="border:none;padding:0">${esc(shortName(m.name))}</a></td>
         <td class="col-type">[${esc(kindLabel(m.kind))}]</td>
-        <td class="col-desc">${esc(m.brief ?? '')}</td>
-      </tr>`;
+        <td class="col-desc">${esc(m.brief ?? '')}</td></tr>`;
     }
     html += `</tbody></table>`;
   }
 
   /* See also */
-  const seeAlso = item.see_also ?? item.see ?? [];
   if (seeAlso.length) {
-    html += `<hr class="detail-divider">`;
-    html += `<div class="detail-section-label">See Also</div>`;
+    html += divider() + sectionLabel('See Also');
     html += `<div class="see-also-list">`;
-    for (const ref of seeAlso) {
-      const name = typeof ref === 'string' ? ref : (ref.name ?? String(ref));
-      html += `<a class="see-also-link" href="#${esc(slug(name))}">${esc(name)}</a>`;
+    for (const s of seeAlso) {
+      const name = s.text.trim();
+      const target = allItems.find(i => i.name === name || shortName(i.name) === name);
+      if (target) {
+        html += `<a class="see-also-link" href="#${esc(slug(target.name))}">${esc(name)}</a>`;
+      } else {
+        html += `<span class="see-also-link" style="cursor:default;opacity:.6">${esc(name)}</span>`;
+      }
     }
     html += `</div>`;
   }
 
   detail.innerHTML = html;
 
-  /* Wire see-also / member links */
   detail.querySelectorAll('a[href^="#"]').forEach(a => {
     a.addEventListener('click', e => {
       e.preventDefault();

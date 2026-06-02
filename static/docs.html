@@ -870,15 +870,30 @@ function buildSidebar(items, filter) {
   const cur  = location.hash.slice(1);
   const namespaces = deriveNamespaces(src);
 
-  /* helper: render a single leaf entry */
+  /* helper: render a single leaf entry (deduped by slug for overloads) */
   function entry(it, indent) {
     const s  = slug(it.name);
     const ac = cur === s ? ' active' : '';
     const pad = indent ? ' style="padding-left:' + indent + 'px"' : '';
+    const overloadCount = src.filter(x => slug(x.name) === s).length;
+    const overloadBadge = overloadCount > 1
+      ? `<span style="font-size:9px;color:var(--tui-hint);flex-shrink:0">×${overloadCount}</span>`
+      : '';
     return `<a class="sidebar-entry${ac}" data-hash="${esc(s)}"${pad}>
       <span class="sidebar-entry-name">${esc(shortName(it.name))}</span>
-      ${kindBadge(it.kind)}
+      ${kindBadge(it.kind)}${overloadBadge}
     </a>`;
+  }
+
+  /* For the sidebar, deduplicate items by slug so overloads show as one entry. */
+  function dedupBySlug(items) {
+    const seen = new Set();
+    return items.filter(i => {
+      const s = slug(i.name);
+      if (seen.has(s)) return false;
+      seen.add(s);
+      return true;
+    });
   }
 
   /**
@@ -904,11 +919,11 @@ function buildSidebar(items, filter) {
    * get a nested expandable sub-group (depth 2); everything else is a leaf.
    */
   function nsChildrenHtml(children) {
-    return children.map(c => {
+    return dedupBySlug(children).map(c => {
       if (TYPE_KINDS.has(c.kind)) {
-        const members = src
+        const members = dedupBySlug(src
           .filter(m => m.meta?.parent === shortName(c.name) || m.meta?.parent === c.name)
-          .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+          .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name))));
         if (members.length) {
           const membersHtml = members.map(m => entry(m, 44)).join('');
           const label = `<span class="sidebar-entry-name">${esc(shortName(c.name))}</span>${kindBadge(c.kind)}`;
@@ -973,10 +988,10 @@ function buildSidebar(items, filter) {
   }
 
   /* 3. Free symbols — not type, not namespace, not a class member, not in a namespace */
-  const free = src
+  const free = dedupBySlug(src
     .filter(i => !TYPE_KINDS.has(i.kind) && !NS_KINDS.has(i.kind)
               && !i.meta?.parent && !isInNamespace(i, namespaces))
-    .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+    .sort((a, b) => shortName(a.name).localeCompare(shortName(b.name))));
 
   for (const it of free) {
     html += entry(it, 0);
@@ -1160,8 +1175,31 @@ function wireLocalCard(cmdText) {
   }
 }
 
-function renderSymbol(item) {
+/** Render one or more items sharing the same slug (overloads). */
+function renderSymbols(items) {
+  if (items.length === 1) {
+    renderSymbol(items[0]);
+    return;
+  }
   const detail = document.getElementById('docs-detail');
+  let html = '';
+  items.forEach((item, idx) => {
+    if (idx > 0) {
+      html += `<div style="border-top:2px solid var(--tui-border);margin:32px 0 24px;"></div>`;
+    }
+    html += symbolHtml(item);
+  });
+  detail.innerHTML = html;
+  detail.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      navigateTo(a.getAttribute('href').slice(1));
+    });
+  });
+  markSidebarActive(slug(items[0].name));
+}
+
+function symbolHtml(item) {
   const langVariant = item.lang ?? item.language ?? 'C++';
   const tags = item.tags ?? [];
 
@@ -1288,23 +1326,29 @@ function renderSymbol(item) {
     }
   }
 
-  /* Members (class/struct/namespace) */
-  const members = allItems.filter(c => {
-    const parent = c.name.includes('::') ? c.name.slice(0, c.name.lastIndexOf('::'))
-                 : c.name.includes('.')  ? c.name.slice(0, c.name.lastIndexOf('.'))
-                 : (c.meta?.parent ?? null);
-    return parent === item.name || c.meta?.parent === shortName(item.name);
-  });
-  if (members.length) {
-    html += divider() + sectionLabel('Members');
-    html += `<table class="param-table"><thead><tr><th>Name</th><th>Kind</th><th>Description</th></tr></thead><tbody>`;
-    for (const m of members.sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)))) {
-      html += `<tr>
-        <td class="col-name"><a class="see-also-link" href="#${esc(slug(m.name))}" style="border:none;padding:0">${esc(shortName(m.name))}</a></td>
-        <td class="col-type">[${esc(kindLabel(m.kind))}]</td>
-        <td class="col-desc">${esc(m.brief ?? '')}</td></tr>`;
+  /* Members — only for type items (class/struct/enum/…), never for functions */
+  if (TYPE_KINDS.has(item.kind)) {
+    const members = allItems.filter(c =>
+      c.meta?.parent === shortName(item.name) || c.meta?.parent === item.name
+    ).sort((a, b) => shortName(a.name).localeCompare(shortName(b.name)));
+    if (members.length) {
+      html += divider() + sectionLabel('Members');
+      // Deduplicate by slug so overloaded members appear once in the table.
+      const seen = new Set();
+      html += `<table class="param-table"><thead><tr><th>Name</th><th>Kind</th><th>Description</th></tr></thead><tbody>`;
+      for (const m of members) {
+        const s = slug(m.name);
+        const overloads = members.filter(x => slug(x.name) === s);
+        if (seen.has(s)) continue;
+        seen.add(s);
+        const suffix = overloads.length > 1 ? ` <span style="color:var(--tui-hint);font-size:10px">[×${overloads.length}]</span>` : '';
+        html += `<tr>
+          <td class="col-name"><a class="see-also-link" href="#${esc(s)}" style="border:none;padding:0">${esc(shortName(m.name))}</a>${suffix}</td>
+          <td class="col-type">[${esc(kindLabel(m.kind))}]</td>
+          <td class="col-desc">${esc(m.brief ?? '')}</td></tr>`;
+      }
+      html += `</tbody></table>`;
     }
-    html += `</tbody></table>`;
   }
 
   /* See also */
@@ -1323,15 +1367,18 @@ function renderSymbol(item) {
     html += `</div>`;
   }
 
-  detail.innerHTML = html;
+  return html;
+}
 
+function renderSymbol(item) {
+  const detail = document.getElementById('docs-detail');
+  detail.innerHTML = symbolHtml(item);
   detail.querySelectorAll('a[href^="#"]').forEach(a => {
     a.addEventListener('click', e => {
       e.preventDefault();
       navigateTo(a.getAttribute('href').slice(1));
     });
   });
-
   markSidebarActive(slug(item.name));
 }
 
@@ -1352,10 +1399,10 @@ function route(hash) {
     renderIndex();
     return;
   }
-  /* find item by slug */
-  const item = allItems.find(i => slug(i.name) === hash);
-  if (item) {
-    renderSymbol(item);
+  /* Collect all items sharing this slug (handles overloads). */
+  const items = allItems.filter(i => slug(i.name) === hash);
+  if (items.length) {
+    renderSymbols(items);
   } else {
     renderNotFound(hash);
   }

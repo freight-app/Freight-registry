@@ -229,7 +229,7 @@ async fn token_list() {
 async fn publish_and_get() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, Some("a library"), None, "1.0.0", "abc123", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, Some("a library"), None, None, "1.0.0", "abc123", "{}", None, None, None, None, false).await.unwrap();
     let (pkg, versions) = db.get_package("mylib", STABLE).await.unwrap().unwrap();
     assert_eq!(pkg.name, "mylib");
     assert_eq!(pkg.channel, STABLE);
@@ -245,7 +245,7 @@ async fn publish_and_get() {
 async fn get_package_case_insensitive() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "MyLib", STABLE, None, None, "1.0.0", "hash", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "MyLib", STABLE, None, None, None, "1.0.0", "hash", "{}", None, None, None, None, false).await.unwrap();
     assert!(db.get_package("mylib", STABLE).await.unwrap().is_some());
     assert!(db.get_package("MYLIB", STABLE).await.unwrap().is_some());
 }
@@ -260,16 +260,16 @@ async fn get_package_not_found() {
 async fn publish_duplicate_version_fails() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "hash1", "{}", None, None).await.unwrap();
-    assert!(db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "hash2", "{}", None, None).await.is_err());
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "hash1", "{}", None, None, None, None, false).await.unwrap();
+    assert!(db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "hash2", "{}", None, None, None, None, false).await.is_err());
 }
 
 #[tokio::test]
 async fn publish_multiple_versions() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.1.0", "h2", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.1.0", "h2", "{}", None, None, None, None, false).await.unwrap();
     let (_, versions) = db.get_package("mylib", STABLE).await.unwrap().unwrap();
     assert_eq!(versions.len(), 2);
 }
@@ -278,8 +278,8 @@ async fn publish_multiple_versions() {
 async fn same_name_different_channels() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", "stable", None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "mylib", "experimental", None, None, "2.0.0", "h2", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", "stable", None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "mylib", "experimental", None, None, None, "2.0.0", "h2", "{}", None, None, None, None, false).await.unwrap();
     let (_, stable_vers) = db.get_package("mylib", "stable").await.unwrap().unwrap();
     let (_, exp_vers) = db.get_package("mylib", "experimental").await.unwrap().unwrap();
     assert_eq!(stable_vers[0].version, "1.0.0");
@@ -290,7 +290,7 @@ async fn same_name_different_channels() {
 async fn get_version() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "checksum1", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "checksum1", "{}", None, None, None, None, false).await.unwrap();
     let ver = db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap();
     assert_eq!(ver.checksum, "checksum1");
     assert_eq!(ver.yanked, 0);
@@ -301,7 +301,7 @@ async fn get_version() {
 async fn yank_and_unyank() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "hash", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "hash", "{}", None, None, None, None, false).await.unwrap();
     assert!(db.set_yanked("mylib", "1.0.0", STABLE, true).await.unwrap());
     assert_eq!(db.get_version("mylib", "1.0.0", STABLE).await.unwrap().unwrap().yanked, 1);
     assert!(db.set_yanked("mylib", "1.0.0", STABLE, false).await.unwrap());
@@ -318,7 +318,7 @@ async fn yank_nonexistent_returns_false() {
 async fn delete_package() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "hash", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "hash", "{}", None, None, None, None, false).await.unwrap();
     assert!(db.delete_package("mylib", STABLE).await.unwrap());
     assert!(db.get_package("mylib", STABLE).await.unwrap().is_none());
 }
@@ -335,9 +335,9 @@ async fn delete_package_nonexistent_returns_false() {
 async fn search_basic() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "awesome-lib", STABLE, None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "boring-tool", STABLE, None, None, "1.0.0", "h2", "{}", None, None).await.unwrap();
-    let (results, total) = db.search_packages("awesome", STABLE, 20, 0).await.unwrap();
+    db.publish_version(uid, "awesome-lib", STABLE, None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "boring-tool", STABLE, None, None, None, "1.0.0", "h2", "{}", None, None, None, None, false).await.unwrap();
+    let (results, total) = db.search_packages("awesome", &[STABLE], 20, 0, "name").await.unwrap();
     assert_eq!(total, 1);
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].0.name, "awesome-lib");
@@ -347,10 +347,10 @@ async fn search_basic() {
 async fn search_empty_query_returns_all() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "lib-a", STABLE, None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "lib-b", STABLE, None, None, "1.0.0", "h2", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "lib-c", STABLE, None, None, "1.0.0", "h3", "{}", None, None).await.unwrap();
-    let (_, total) = db.search_packages("", STABLE, 20, 0).await.unwrap();
+    db.publish_version(uid, "lib-a", STABLE, None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "lib-b", STABLE, None, None, None, "1.0.0", "h2", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "lib-c", STABLE, None, None, None, "1.0.0", "h3", "{}", None, None, None, None, false).await.unwrap();
+    let (_, total) = db.search_packages("", &[STABLE], 20, 0, "name").await.unwrap();
     assert_eq!(total, 3);
 }
 
@@ -359,14 +359,14 @@ async fn search_pagination() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
     for i in 0..5 {
-        db.publish_version(uid, &format!("pkg-{i}"), STABLE, None, None, "1.0.0", &format!("h{i}"), "{}", None, None)
+        db.publish_version(uid, &format!("pkg-{i}"), STABLE, None, None, None, "1.0.0", &format!("h{i}"), "{}", None, None, None, None, false)
             .await
             .unwrap();
     }
-    let (page1, total) = db.search_packages("pkg", STABLE, 2, 0).await.unwrap();
+    let (page1, total) = db.search_packages("pkg", &[STABLE], 2, 0, "name").await.unwrap();
     assert_eq!(total, 5);
     assert_eq!(page1.len(), 2);
-    let (page3, _) = db.search_packages("pkg", STABLE, 2, 4).await.unwrap();
+    let (page3, _) = db.search_packages("pkg", &[STABLE], 2, 4, "name").await.unwrap();
     assert_eq!(page3.len(), 1);
 }
 
@@ -374,9 +374,9 @@ async fn search_pagination() {
 async fn search_excludes_packages_with_no_versions() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "has-version", STABLE, None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "has-version", STABLE, None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
     // "no-version" never published → shouldn't appear
-    let (_, total) = db.search_packages("", STABLE, 20, 0).await.unwrap();
+    let (_, total) = db.search_packages("", &[STABLE], 20, 0, "name").await.unwrap();
     assert_eq!(total, 1);
 }
 
@@ -384,12 +384,12 @@ async fn search_excludes_packages_with_no_versions() {
 async fn search_scoped_to_channel() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", "stable", None, None, "1.0.0", "h1", "{}", None, None).await.unwrap();
-    db.publish_version(uid, "mylib", "experimental", None, None, "2.0.0", "h2", "{}", None, None).await.unwrap();
-    let (stable_results, stable_total) = db.search_packages("mylib", "stable", 20, 0).await.unwrap();
+    db.publish_version(uid, "mylib", "stable", None, None, None, "1.0.0", "h1", "{}", None, None, None, None, false).await.unwrap();
+    db.publish_version(uid, "mylib", "experimental", None, None, None, "2.0.0", "h2", "{}", None, None, None, None, false).await.unwrap();
+    let (stable_results, stable_total) = db.search_packages("mylib", &["stable"], 20, 0, "name").await.unwrap();
     assert_eq!(stable_total, 1);
     assert_eq!(stable_results[0].0.channel, "stable");
-    let (exp_results, exp_total) = db.search_packages("mylib", "experimental", 20, 0).await.unwrap();
+    let (exp_results, exp_total) = db.search_packages("mylib", &["experimental"], 20, 0, "name").await.unwrap();
     assert_eq!(exp_total, 1);
     assert_eq!(exp_results[0].0.channel, "experimental");
 }
@@ -400,7 +400,7 @@ async fn search_scoped_to_channel() {
 async fn first_publisher_auto_owns() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "h", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "h", "{}", None, None, None, None, false).await.unwrap();
     assert_eq!(db.user_owns_package(uid, "mylib", STABLE).await.unwrap(), Some(true));
 }
 
@@ -409,7 +409,7 @@ async fn non_owner_not_allowed() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let bob = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", STABLE, None, None, "1.0.0", "h", "{}", None, None).await.unwrap();
+    db.publish_version(alice, "mylib", STABLE, None, None, None, "1.0.0", "h", "{}", None, None, None, None, false).await.unwrap();
     assert_eq!(db.user_owns_package(bob, "mylib", STABLE).await.unwrap(), Some(false));
 }
 
@@ -425,7 +425,7 @@ async fn add_and_remove_owner() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let bob = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", STABLE, None, None, "1.0.0", "h", "{}", None, None).await.unwrap();
+    db.publish_version(alice, "mylib", STABLE, None, None, None, "1.0.0", "h", "{}", None, None, None, None, false).await.unwrap();
     assert!(db.add_package_owner("mylib", STABLE, "bob").await.unwrap());
     assert_eq!(db.user_owns_package(bob, "mylib", STABLE).await.unwrap(), Some(true));
     assert!(db.remove_package_owner("mylib", STABLE, "bob").await.unwrap());
@@ -437,7 +437,7 @@ async fn get_package_owners() {
     let db = Db::open_memory().await.unwrap();
     let alice = make_user(&db, "alice").await;
     let _ = make_user(&db, "bob").await;
-    db.publish_version(alice, "mylib", STABLE, None, None, "1.0.0", "h", "{}", None, None).await.unwrap();
+    db.publish_version(alice, "mylib", STABLE, None, None, None, "1.0.0", "h", "{}", None, None, None, None, false).await.unwrap();
     db.add_package_owner("mylib", STABLE, "bob").await.unwrap();
     let owners = db.get_package_owners("mylib", STABLE).await.unwrap();
     assert_eq!(owners.len(), 2);
@@ -452,7 +452,7 @@ async fn get_package_owners() {
 async fn download_count_increments() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.publish_version(uid, "mylib", STABLE, None, None, "1.0.0", "h", "{}", None, None).await.unwrap();
+    db.publish_version(uid, "mylib", STABLE, None, None, None, "1.0.0", "h", "{}", None, None, None, None, false).await.unwrap();
     db.increment_downloads("mylib", "1.0.0", STABLE);
     db.increment_downloads("mylib", "1.0.0", STABLE);
     // Give the spawned tasks time to complete.

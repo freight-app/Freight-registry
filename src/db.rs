@@ -124,14 +124,24 @@ pub const DEFAULT_CHANNEL: &str = "stable";
 
 #[derive(FromRow)]
 pub struct VersionRow {
-    pub version:      String,
-    pub checksum:     String,
-    pub yanked:       i64,
-    pub downloads:    i64,
-    pub dependencies: String,         // JSON object: {"name": "version", ...}
-    pub upstream_url: Option<String>, // upstream source archive URL (metadata-only packages)
-    pub build_system: Option<String>, // e.g. "cmake", "make", "meson"
-    pub supports:     Option<String>, // platform filter expression, e.g. "!uwp & !arm"
+    pub version:       String,
+    pub checksum:      String,
+    pub yanked:        i64,
+    pub downloads:     i64,
+    pub dependencies:  String,         // JSON object: {"name": "version", ...}
+    pub upstream_url:  Option<String>, // upstream source archive URL (metadata-only packages)
+    pub build_system:  Option<String>, // e.g. "cmake", "make", "meson"
+    pub supports:      Option<String>, // platform filter expression
+    /// Verification pipeline state: `pending`, `published`, or `rejected`.
+    pub status:        String,
+    /// Human-readable reason when `status = 'rejected'`.
+    pub status_reason: Option<String>,
+}
+
+impl VersionRow {
+    pub fn is_published(&self) -> bool {
+        self.status == "published"
+    }
 }
 
 #[derive(FromRow)]
@@ -661,8 +671,8 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let mut versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system, supports FROM versions
-             WHERE package_id = ?"))
+                    upstream_url, build_system, supports, status, status_reason FROM versions
+             WHERE package_id = ? AND status = 'published'"))
         .bind(pkg.id)
         .fetch_all(&self.pool)
         .await?;
@@ -675,7 +685,7 @@ impl Db {
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system, supports FROM versions
+                    upstream_url, build_system, supports, status, status_reason FROM versions
              WHERE version = ?
                AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"))
         .bind(version)
@@ -801,19 +811,21 @@ impl Db {
         };
         let sql = self.q_sql(&format!(
             "SELECT p.id, p.name, p.channel, p.description, p.license, p.keywords, p.latest_version,
-                    v.version      AS v_version,     v.checksum     AS v_checksum,
-                    v.yanked       AS v_yanked,       v.downloads    AS v_downloads,
-                    v.dependencies AS v_deps,         v.upstream_url AS v_upstream_url,
-                    v.build_system AS v_build_system, v.supports     AS v_supports
+                    v.version       AS v_version,       v.checksum       AS v_checksum,
+                    v.yanked        AS v_yanked,         v.downloads      AS v_downloads,
+                    v.dependencies  AS v_deps,           v.upstream_url   AS v_upstream_url,
+                    v.build_system  AS v_build_system,   v.supports       AS v_supports,
+                    v.status        AS v_status,         v.status_reason  AS v_status_reason
              FROM packages p
              LEFT JOIN versions v ON v.package_id = p.id
                AND v.version = COALESCE(p.latest_version,
                      (SELECT version FROM versions WHERE package_id = p.id AND yanked = 0
-                      ORDER BY created_at DESC LIMIT 1))
+                      AND status = 'published' ORDER BY created_at DESC LIMIT 1))
                AND v.yanked = 0
+               AND v.status = 'published'
              WHERE {text_filter}
                AND {ch_filter}
-               AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id)
+               AND EXISTS (SELECT 1 FROM versions WHERE package_id = p.id AND status = 'published')
              ORDER BY {order} LIMIT ? OFFSET ?"
         ));
         let mut rows_q = sqlx::query(&sql);
@@ -847,13 +859,15 @@ impl Db {
             let ver = match row.try_get::<String, _>("v_version") {
                 Ok(version) => Some(VersionRow {
                     version,
-                    checksum:     row.try_get("v_checksum").unwrap_or_default(),
-                    yanked:       row.try_get("v_yanked").unwrap_or(0),
-                    downloads:    row.try_get("v_downloads").unwrap_or(0),
-                    dependencies: row.try_get("v_deps").unwrap_or_default(),
-                    upstream_url: row.try_get("v_upstream_url").unwrap_or_default(),
-                    build_system: row.try_get("v_build_system").unwrap_or_default(),
-                    supports:     row.try_get("v_supports").unwrap_or_default(),
+                    checksum:      row.try_get("v_checksum").unwrap_or_default(),
+                    yanked:        row.try_get("v_yanked").unwrap_or(0),
+                    downloads:     row.try_get("v_downloads").unwrap_or(0),
+                    dependencies:  row.try_get("v_deps").unwrap_or_default(),
+                    upstream_url:  row.try_get("v_upstream_url").unwrap_or_default(),
+                    build_system:  row.try_get("v_build_system").unwrap_or_default(),
+                    supports:      row.try_get("v_supports").unwrap_or_default(),
+                    status:        row.try_get("v_status").unwrap_or_else(|_| "published".to_string()),
+                    status_reason: row.try_get("v_status_reason").unwrap_or_default(),
                 }),
                 Err(_) => None,
             };
@@ -882,6 +896,9 @@ impl Db {
         upstream_url: Option<&str>,
         build_system: Option<&str>,
         supports: Option<&str>,
+        // true  → status='pending' (goes through CI pipeline before becoming public)
+        // false → status='published' (metadata-only stubs are pre-verified)
+        initial_status_pending: bool,
     ) -> Result<()> {
         sqlx::query(&self.q_sql("INSERT INTO packages (name, channel, description, license, keywords) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(name, channel) DO UPDATE SET
@@ -902,8 +919,9 @@ impl Db {
         .fetch_one(&self.pool)
         .await?;
 
-        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system, supports)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"))
+        let initial_status = if initial_status_pending { "pending" } else { "published" };
+        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system, supports, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"))
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
@@ -911,6 +929,7 @@ impl Db {
         .bind(upstream_url)
         .bind(build_system)
         .bind(supports)
+        .bind(initial_status)
         .execute(&self.pool)
         .await?;
 
@@ -947,6 +966,43 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    /// Update the verification status of a version: `"published"` or `"rejected"`.
+    pub async fn set_version_status(
+        &self,
+        name: &str,
+        version: &str,
+        channel: &str,
+        status: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(&self.q_sql(
+            "UPDATE versions SET status = ?, status_reason = ?
+             WHERE version = ?
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"
+        ))
+        .bind(status).bind(reason).bind(version).bind(name).bind(channel)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Fetch the raw verification status for a version.
+    /// Returns `(status, status_reason)` or `None` if the version does not exist.
+    pub async fn get_version_status(
+        &self,
+        name: &str,
+        version: &str,
+        channel: &str,
+    ) -> Result<Option<(String, Option<String>)>> {
+        let row = sqlx::query_as(&self.q_sql(
+            "SELECT status, status_reason FROM versions
+             WHERE version = ?
+               AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"
+        ))
+        .bind(version).bind(name).bind(channel)
+        .fetch_optional(&self.pool).await?;
+        Ok(row)
     }
 
     /// Return all distinct channel names present in the packages table, sorted.

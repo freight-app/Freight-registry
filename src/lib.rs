@@ -83,6 +83,10 @@ pub struct AppState {
     pub allowed_languages: Option<Vec<String>>,
     /// How uploaded tarballs are scanned for malware after publish.
     pub scan_backend: ScanBackend,
+    /// Container image for the CI verification pipeline (build + test + scan).
+    /// When `Some`, each source publish starts as `pending` and is only made
+    /// public after the container job passes.  `None` publishes immediately.
+    pub verify_image: Option<String>,
     /// Base URL of a separate download server.  When set, `/download` endpoints
     /// redirect there instead of streaming bytes through this server.
     /// See `config.rs` for the full priority chain.

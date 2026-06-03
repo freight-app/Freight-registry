@@ -110,6 +110,14 @@ enum Command {
         /// environment with no network access and tight resource limits.
         #[arg(long, env = "FREIGHT_SCAN_BACKEND", default_value = "auto")]
         scan_backend: freight_registry::ScanBackend,
+        /// Container image for the CI verification pipeline.
+        /// When set, every source publish is held as `pending` until the
+        /// container builds it, runs its tests, and scans it for malware.
+        /// The container must output a JSON result to stdout (see docs).
+        /// Omit to publish immediately without verification.
+        /// Example: ghcr.io/tinytinyterminator/freight-ci:latest
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE")]
+        verify_image: Option<String>,
         /// Base URL of a separate download server (CDN, nginx, public S3 bucket, …).
         /// When set, /download endpoints return a 302 redirect here instead of
         /// streaming bytes through the registry server.  When absent and the S3
@@ -246,7 +254,7 @@ async fn main() -> Result<()> {
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
             mirror_upstream, max_packages_per_user, allowed_languages,
-            scan_backend, download_url,
+            scan_backend, verify_image, download_url,
             smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
@@ -362,6 +370,7 @@ async fn main() -> Result<()> {
                 max_packages_per_user,
                 allowed_languages:    if allowed_languages.is_empty() { None } else { Some(allowed_languages) },
                 scan_backend,
+                verify_image,
                 download_url,
                 oauth_providers,
                 oauth_states:         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

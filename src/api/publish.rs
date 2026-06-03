@@ -166,6 +166,11 @@ pub async fn publish(
         let _ = state.storage.save_readme(&meta.name, &meta.vers, content.as_bytes()).await;
     }
 
+    // Metadata-only stubs are published immediately (no source to verify).
+    // Source packages start as `pending` when a verify_image is configured,
+    // or are published immediately when no pipeline is set up.
+    let needs_verification = !is_metadata_only && state.verify_image.is_some();
+
     state
         .db
         .publish_version(
@@ -181,46 +186,39 @@ pub async fn publish(
             meta.upstream_url.as_deref(),
             meta.build_system.as_deref(),
             meta.supports.as_deref(),
+            needs_verification,
         )
         .await?;
 
     state.metrics.publishes_total.inc();
     let ip = addr.ip().to_string();
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
-    tracing::info!(user = %auth.user.username, channel, "published {}@{}", meta.name, meta.vers);
+    tracing::info!(user = %auth.user.username, channel, pending = needs_verification,
+                   "received {}@{}", meta.name, meta.vers);
 
-    // Kick off an async tarball security scan in the background.
-    // Never blocks the publish response.
-    if !is_metadata_only {
-        let tarball_bytes = tarball.to_vec();
-        let pkg_label     = format!("{}@{}", meta.name, meta.vers);
-        let db            = state.db.clone();
-        let uid           = auth.user.id;
-        let backend       = state.scan_backend.clone();
+    // Launch the verification pipeline in a background task.
+    // Reads the container's JSON output and either publishes or rejects the version.
+    if needs_verification {
+        let tarball_bytes  = tarball.to_vec();
+        let pkg_name       = meta.name.clone();
+        let pkg_vers       = meta.vers.clone();
+        let pkg_channel    = channel.to_string();
+        let db             = state.db.clone();
+        let uid            = auth.user.id;
+        let image          = state.verify_image.clone().unwrap();
+        let scan_backend   = state.scan_backend.clone();
         tokio::spawn(async move {
-            match scan_tarball(&tarball_bytes, &pkg_label, &backend) {
-                ScanOutcome::Clean => {
-                    tracing::debug!(pkg = %pkg_label, "scan: clean");
-                }
-                ScanOutcome::Infected(findings) => {
-                    tracing::error!(pkg = %pkg_label, findings = %findings, "scan: malware detected");
-                    db.audit(
-                        Some(uid),
-                        "malware_detected",
-                        Some(&pkg_label),
-                        Some(&findings),
-                        None,
-                    );
-                }
-                ScanOutcome::Unavailable(reason) => {
-                    tracing::debug!(pkg = %pkg_label, %reason, "scan: unavailable");
-                }
-            }
+            run_verification_pipeline(
+                &tarball_bytes, &pkg_name, &pkg_vers, &pkg_channel,
+                &image, &scan_backend, &db, uid,
+            ).await;
         });
     }
 
+    let status = if needs_verification { "pending" } else { "published" };
     Ok(Json(json!({
-        "ok": true,
+        "ok":     true,
+        "status": status,
         "warnings": { "invalid_categories": [], "invalid_badges": [], "other": [] }
     })))
 }
@@ -364,6 +362,154 @@ fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {
         anyhow::bail!("request body truncated in tarball data");
     }
     Ok((meta, &data[tar_start..tar_start + tar_len]))
+}
+
+// ── Verification pipeline ─────────────────────────────────────────────────────
+
+/// Run the full CI pipeline inside a container, then update the version status.
+///
+/// The container is given the tarball as a read-only mount and must output a
+/// single JSON object to stdout:
+/// ```json
+/// {
+///   "passed": true,
+///   "build":  { "passed": true,  "output": "…" },
+///   "test":   { "passed": true,  "passed_count": 5, "failed_count": 0 },
+///   "scan":   { "passed": true,  "findings": [] }
+/// }
+/// ```
+/// Any non-JSON stdout or a container exit code other than 0 or 1 is treated
+/// as a pipeline error and the version is rejected with the raw output as the
+/// reason.
+async fn run_verification_pipeline(
+    tarball:      &[u8],
+    name:         &str,
+    version:      &str,
+    channel:      &str,
+    image:        &str,
+    scan_backend: &crate::ScanBackend,
+    db:           &crate::db::Db,
+    uid:          i64,
+) {
+    let label = format!("{name}@{version}");
+    tracing::info!(pkg = %label, image, "starting verification pipeline");
+
+    // Write tarball to a temp file so we can mount it into the container.
+    let tmp = std::env::temp_dir().join(format!("freight-verify-{}.tar.gz", label_slug(&label)));
+    if std::fs::write(&tmp, tarball).is_err() {
+        let reason = "could not write temp file for verification container";
+        tracing::error!(pkg = %label, reason, "pipeline setup failed");
+        let _ = db.set_version_status(name, version, channel, "rejected", Some(reason)).await;
+        db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
+        return;
+    }
+
+    // Detect container runtime (same preference order as scan backend).
+    let runtime = match scan_backend {
+        crate::ScanBackend::Docker   => Some("docker"),
+        crate::ScanBackend::Podman   => Some("podman"),
+        crate::ScanBackend::Clamscan | crate::ScanBackend::None => None,
+        crate::ScanBackend::Auto => {
+            if has_executable("docker")      { Some("docker") }
+            else if has_executable("podman") { Some("podman") }
+            else                             { None }
+        }
+    };
+
+    let Some(runtime) = runtime else {
+        let reason = "no container runtime available (docker/podman not found); \
+                      set FREIGHT_SCAN_BACKEND=docker or =podman";
+        tracing::warn!(pkg = %label, reason, "verification skipped — publishing immediately");
+        // No container runtime: publish without verification.
+        let _ = db.set_version_status(name, version, channel, "published", None).await;
+        let _ = std::fs::remove_file(&tmp);
+        return;
+    };
+
+    let mount  = format!("{}:/pkg.tar.gz:ro", tmp.display());
+    let output = std::process::Command::new(runtime)
+        .args([
+            "run", "--rm",
+            "--network",      "none",
+            "--read-only",
+            "--memory",       "1g",
+            "--cpus",         "1.0",
+            "--security-opt", "no-new-privileges",
+            "--tmpfs",        "/tmp:rw,noexec,nosuid,size=512m",
+            "--tmpfs",        "/build:rw,noexec,nosuid,size=2g",
+            "-v", &mount,
+            image,
+            "/pkg.tar.gz",   // passed as first argument to the container entrypoint
+        ])
+        .output();
+
+    let _ = std::fs::remove_file(&tmp);
+
+    match output {
+        Err(e) => {
+            let reason = format!("failed to launch container ({runtime}): {e}");
+            tracing::error!(pkg = %label, %reason, "pipeline launch failed");
+            let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
+            db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
+        }
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            match serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+                Ok(result) => {
+                    let passed = result["passed"].as_bool().unwrap_or(false);
+                    if passed {
+                        tracing::info!(pkg = %label, "verification passed — publishing");
+                        let _ = db.set_version_status(name, version, channel, "published", None).await;
+                        db.audit(Some(uid), "verify_passed", Some(name), Some(version), None);
+                    } else {
+                        let reason = build_rejection_reason(&result);
+                        tracing::warn!(pkg = %label, %reason, "verification failed — rejecting");
+                        let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
+                        db.audit(Some(uid), "verify_failed", Some(name), Some(version), Some(&reason));
+                    }
+                }
+                Err(_) => {
+                    // Non-JSON output = container error (crash, wrong image, etc.)
+                    let stderr  = String::from_utf8_lossy(&out.stderr);
+                    let reason  = format!(
+                        "container produced non-JSON output (exit {})\nstdout: {}\nstderr: {}",
+                        out.status.code().unwrap_or(-1),
+                        stdout.trim(),
+                        stderr.trim(),
+                    );
+                    tracing::error!(pkg = %label, code = ?out.status.code(), "container output was not JSON");
+                    let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
+                    db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
+                }
+            }
+        }
+    }
+}
+
+/// Build a human-readable rejection reason from the pipeline JSON result.
+fn build_rejection_reason(result: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+    if result["build"]["passed"].as_bool() == Some(false) {
+        parts.push("build failed".to_string());
+        if let Some(o) = result["build"]["output"].as_str() {
+            let tail: String = o.lines().rev().take(5).collect::<Vec<_>>()
+                .into_iter().rev().collect::<Vec<_>>().join("\n");
+            parts.push(format!("  {tail}"));
+        }
+    }
+    if result["test"]["passed"].as_bool() == Some(false) {
+        let failed = result["test"]["failed_count"].as_u64().unwrap_or(0);
+        parts.push(format!("{failed} test(s) failed"));
+    }
+    if result["scan"]["passed"].as_bool() == Some(false) {
+        if let Some(arr) = result["scan"]["findings"].as_array() {
+            for f in arr {
+                if let Some(s) = f.as_str() { parts.push(format!("scan: {s}")); }
+            }
+        }
+    }
+    if parts.is_empty() { "verification failed (no details)".to_string() }
+    else { parts.join("\n") }
 }
 
 // ── Server-side security scan ─────────────────────────────────────────────────

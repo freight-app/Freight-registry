@@ -42,6 +42,7 @@ pub mod search;
 pub mod stats;
 pub mod totp;
 pub mod user_profile;
+pub mod verify_status;
 pub mod yank;
 
 pub type ApiResult<T> = Result<T, ApiError>;
@@ -128,6 +129,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // Auth-required
         .route("/api/v1/packages",                                   put(publish::publish))
         .route("/api/v1/packages/:name/:version/prebuilt/:triple",   put(prebuilt::upload))
+        .route("/api/v1/packages/:name/:version/status",    get(verify_status::get_status))
         .route("/api/v1/packages/:name/:version/yank",     delete(yank::yank).put(yank::unyank))
         .route("/api/v1/packages/:name/owners",            get(owners::list).put(owners::add).delete(owners::remove))
         .route("/api/v1/me",                               get(me))

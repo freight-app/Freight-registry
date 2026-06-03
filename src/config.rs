@@ -24,6 +24,25 @@
 //! rate_limit_write  = 10
 //! audit_log_ttl_days = 90
 //!
+//! # Malware scan backend used after each publish.
+//! # One of: auto (default), docker, podman, clamscan, none.
+//! [serve.scan]
+//! backend = "docker"
+//!
+//! # CI verification pipeline: builds + tests + scans each source publish
+//! # before making it public. Packages are held as `pending` until the
+//! # container job passes. Omit this section to publish immediately.
+//! #
+//! # `default` is used for any platform not listed explicitly.
+//! # Add per-platform images for cross-platform verification.
+//! # Supported platform keys: linux, windows, freebsd, macos, openbsd,
+//! #                           netbsd, dragonfly, solaris, android
+//! [serve.verify]
+//! default = "ghcr.io/tinytinyterminator/freight-ci-linux:latest"
+//! linux   = "ghcr.io/tinytinyterminator/freight-ci-linux:latest"
+//! windows = "ghcr.io/tinytinyterminator/freight-ci-windows:latest"
+//! freebsd = "ghcr.io/tinytinyterminator/freight-ci-freebsd:latest"
+//!
 //! # Email delivery — omit this section to log links to stdout instead
 //! [serve.smtp]
 //! host     = "smtp.example.com"
@@ -114,6 +133,10 @@ pub struct ServeConfig {
     ///
     /// When absent and the storage backend is local, bytes are streamed directly.
     pub download_url:       Option<String>,
+    /// Malware scan settings.
+    pub scan:               Option<ScanConfig>,
+    /// CI verification pipeline settings.
+    pub verify:             Option<VerifyConfig>,
     /// OAuth/OIDC providers.  Each entry becomes a `/auth/:name` login route.
     /// See [`OAuthProviderConfig`] for the full set of fields.
     ///
@@ -128,6 +151,38 @@ pub struct ServeConfig {
     /// ```
     #[serde(default)]
     pub oauth: Vec<OAuthProviderConfig>,
+}
+
+/// Malware scan settings under `[serve.scan]`.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ScanConfig {
+    /// One of: `auto` (default), `docker`, `podman`, `clamscan`, `none`.
+    pub backend: Option<String>,
+}
+
+/// CI verification pipeline settings under `[serve.verify]`.
+///
+/// Each platform key is a container image that will be used to build and test
+/// published packages for that target platform. Packages are held as `pending`
+/// until all configured platform pipelines pass.
+///
+/// Supported keys: `default`, `linux`, `windows`, `freebsd`, `macos`,
+/// `openbsd`, `netbsd`, `dragonfly`, `solaris`, `android`.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyConfig {
+    /// Fallback image used when no platform-specific image matches.
+    pub default:   Option<String>,
+    pub linux:     Option<String>,
+    pub windows:   Option<String>,
+    pub freebsd:   Option<String>,
+    pub macos:     Option<String>,
+    pub openbsd:   Option<String>,
+    pub netbsd:    Option<String>,
+    pub dragonfly: Option<String>,
+    pub solaris:   Option<String>,
+    pub android:   Option<String>,
 }
 
 /// SMTP settings under `[serve.smtp]` in the config file.
@@ -153,22 +208,31 @@ pub struct S3Config {
     pub region:   Option<String>,
 }
 
+/// Loaded configuration that cannot be expressed as env vars.
+pub struct LoadedExtras {
+    pub oauth:          Vec<OAuthProviderConfig>,
+    /// Per-platform CI verification images from `[serve.verify]`.
+    /// Keys are platform names (`"linux"`, `"windows"`, `"freebsd"`, …).
+    /// `"default"` is the fallback for platforms not explicitly listed.
+    pub verify_images:  std::collections::HashMap<String, String>,
+}
+
 /// Load a config file, inject scalar values as env vars (only for unset vars),
-/// and return any OAuth provider configs (which cannot be expressed as env vars).
+/// and return extras that cannot be expressed as env vars.
 ///
-/// Returns `(path_loaded, oauth_providers)`.  `path_loaded` is `None` when no
-/// config file was found.  `oauth_providers` is empty when the file has no
-/// `[[serve.oauth]]` entries.
-pub fn load() -> (Option<PathBuf>, Vec<OAuthProviderConfig>) {
+/// Returns `(path_loaded, extras)`.  `path_loaded` is `None` when no config
+/// file was found.
+pub fn load() -> (Option<PathBuf>, LoadedExtras) {
+    let empty = LoadedExtras { oauth: vec![], verify_images: std::collections::HashMap::new() };
     let Some(path) = find_config_file() else {
-        return (None, vec![]);
+        return (None, empty);
     };
 
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("warning: could not read config {}: {e}", path.display());
-            return (None, vec![]);
+            return (None, empty);
         }
     };
 
@@ -181,8 +245,30 @@ pub fn load() -> (Option<PathBuf>, Vec<OAuthProviderConfig>) {
     };
 
     let oauth = cfg.serve.as_ref().map(|s| s.oauth.clone()).unwrap_or_default();
+    let verify_images = cfg.serve.as_ref()
+        .and_then(|s| s.verify.as_ref())
+        .map(collect_verify_images)
+        .unwrap_or_default();
     apply(cfg);
-    (Some(path), oauth)
+    (Some(path), LoadedExtras { oauth, verify_images })
+}
+
+fn collect_verify_images(v: &VerifyConfig) -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    let mut ins = |k: &str, val: &Option<String>| {
+        if let Some(img) = val { m.insert(k.to_string(), img.clone()); }
+    };
+    ins("default",   &v.default);
+    ins("linux",     &v.linux);
+    ins("windows",   &v.windows);
+    ins("freebsd",   &v.freebsd);
+    ins("macos",     &v.macos);
+    ins("openbsd",   &v.openbsd);
+    ins("netbsd",    &v.netbsd);
+    ins("dragonfly", &v.dragonfly);
+    ins("solaris",   &v.solaris);
+    ins("android",   &v.android);
+    m
 }
 
 fn find_config_file() -> Option<PathBuf> {
@@ -235,6 +321,10 @@ fn apply(cfg: Config) {
     if let Some(v) = s.rate_limit_write   { set_if_absent("FREIGHT_RATE_LIMIT_WRITE",  &v.to_string()); }
     if let Some(v) = s.audit_log_ttl_days { set_if_absent("FREIGHT_AUDIT_LOG_TTL_DAYS",&v.to_string()); }
     if let Some(v) = s.download_url       { set_if_absent("FREIGHT_DOWNLOAD_URL",      &v); }
+
+    if let Some(scan) = s.scan {
+        if let Some(v) = scan.backend { set_if_absent("FREIGHT_SCAN_BACKEND", &v); }
+    }
 
     if let Some(smtp) = s.smtp {
         if let Some(v) = smtp.host     { set_if_absent("FREIGHT_SMTP_HOST",     &v); }

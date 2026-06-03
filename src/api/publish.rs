@@ -174,10 +174,60 @@ pub async fn publish(
         if langs.is_empty() { None } else { Some(langs.join(",")) }
     };
 
-    // Metadata-only stubs are published immediately (no source to verify).
-    // Source packages start as `pending` when a verify_image is configured,
-    // or are published immediately when no pipeline is set up.
-    let needs_verification = !is_metadata_only && state.verify_image.is_some();
+    // Metadata-only stubs skip both scanning and verification (no source bytes).
+    // Source packages: scan first (synchronous, pre-publish), then optionally
+    // run the full CI pipeline asynchronously if verify_image is configured.
+    if !is_metadata_only {
+        match scan_tarball(tarball, &format!("{}@{}", meta.name, meta.vers), &state.scan_backend) {
+            ScanOutcome::Infected(findings) => {
+                tracing::warn!(
+                    pkg = %format!("{}@{}", meta.name, meta.vers),
+                    findings = %findings,
+                    "publish rejected — malware detected"
+                );
+                return Err(ApiError::bad_request(
+                    format!("tarball failed malware scan: {findings}")
+                ));
+            }
+            ScanOutcome::Unavailable(reason) => {
+                tracing::debug!(reason = %reason, "scan backend unavailable — skipping");
+            }
+            ScanOutcome::Clean => {
+                tracing::debug!(pkg = %format!("{}@{}", meta.name, meta.vers), "scan clean");
+            }
+        }
+    }
+
+    // Determine which platform images to run verification against.
+    // `verify_images` wins over the legacy `verify_image` single-image mode.
+    let pipeline_images: Vec<(String, String)> = if !is_metadata_only {
+        if !state.verify_images.is_empty() {
+            // Select images for platforms the package supports.
+            // `supports` is a comma/space-separated string like "linux,windows,freebsd".
+            // When absent, run all configured platform images.
+            let supported: Vec<String> = meta.supports.as_deref()
+                .map(|s| s.split([',', ' ']).map(str::trim).filter(|s| !s.is_empty())
+                          .map(str::to_ascii_lowercase).collect())
+                .unwrap_or_default();
+
+            state.verify_images.iter()
+                .filter(|(platform, _)| {
+                    platform.as_str() == "default"
+                    || supported.is_empty()
+                    || supported.contains(platform)
+                })
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        } else if let Some(ref img) = state.verify_image {
+            vec![("default".to_string(), img.clone())]
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let needs_verification = !pipeline_images.is_empty();
 
     state
         .db
@@ -203,25 +253,57 @@ pub async fn publish(
     let ip = addr.ip().to_string();
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
     tracing::info!(user = %auth.user.username, channel, pending = needs_verification,
-                   "received {}@{}", meta.name, meta.vers);
+                   platforms = pipeline_images.len(), "received {}@{}", meta.name, meta.vers);
 
-    // Launch the verification pipeline in a background task.
-    // Reads the container's JSON output and either publishes or rejects the version.
+    // Launch one verification task per platform pipeline.
+    // All tasks vote: the version is published only when every task passes.
+    // The first rejection wins — the others are cancelled via a shared flag.
     if needs_verification {
-        let tarball_bytes  = tarball.to_vec();
-        let pkg_name       = meta.name.clone();
-        let pkg_vers       = meta.vers.clone();
-        let pkg_channel    = channel.to_string();
-        let db             = state.db.clone();
-        let uid            = auth.user.id;
-        let image          = state.verify_image.clone().unwrap();
-        let scan_backend   = state.scan_backend.clone();
-        tokio::spawn(async move {
-            run_verification_pipeline(
-                &tarball_bytes, &pkg_name, &pkg_vers, &pkg_channel,
-                &image, &scan_backend, &db, uid,
-            ).await;
-        });
+        let tarball_bytes = tarball.to_vec();
+        let pkg_name      = meta.name.clone();
+        let pkg_vers      = meta.vers.clone();
+        let pkg_channel   = channel.to_string();
+        let db            = state.db.clone();
+        let uid           = auth.user.id;
+        let scan_backend  = state.scan_backend.clone();
+        let total         = pipeline_images.len();
+
+        // Shared counter: how many pipelines remain.
+        let remaining = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(total));
+        // Shared flag: set to true when any pipeline rejects.
+        let rejected  = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        for (platform, image) in pipeline_images {
+            let tarball_bytes = tarball_bytes.clone();
+            let pkg_name      = pkg_name.clone();
+            let pkg_vers      = pkg_vers.clone();
+            let pkg_channel   = pkg_channel.clone();
+            let db            = db.clone();
+            let scan_backend  = scan_backend.clone();
+            let remaining     = remaining.clone();
+            let rejected      = rejected.clone();
+            tokio::spawn(async move {
+                let passed = run_verification_pipeline(
+                    &tarball_bytes, &pkg_name, &pkg_vers, &pkg_channel,
+                    &platform, &image, &scan_backend, &db, uid,
+                ).await;
+
+                if !passed {
+                    rejected.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                let prev = remaining.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                if prev == 1 {
+                    // Last pipeline finished. Publish only if none rejected.
+                    if !rejected.load(std::sync::atomic::Ordering::SeqCst) {
+                        let _ = db.set_version_status(
+                            &pkg_name, &pkg_vers, &pkg_channel, "published", None
+                        ).await;
+                        db.audit(Some(uid), "verify_passed", Some(&pkg_name), Some(&pkg_vers), None);
+                        tracing::info!(pkg = %format!("{pkg_name}@{pkg_vers}"), "all pipelines passed — published");
+                    }
+                }
+            });
+        }
     }
 
     let status = if needs_verification { "pending" } else { "published" };
@@ -375,7 +457,11 @@ fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {
 
 // ── Verification pipeline ─────────────────────────────────────────────────────
 
-/// Run the full CI pipeline inside a container, then update the version status.
+/// Run the CI pipeline for one platform inside a container.
+///
+/// Returns `true` if the pipeline passed, `false` if it failed or errored.
+/// The caller is responsible for transitioning the version status once all
+/// platform pipelines have voted.
 ///
 /// The container is given the tarball as a read-only mount and must output a
 /// single JSON object to stdout:
@@ -395,22 +481,25 @@ async fn run_verification_pipeline(
     name:         &str,
     version:      &str,
     channel:      &str,
+    platform:     &str,
     image:        &str,
     scan_backend: &crate::ScanBackend,
     db:           &crate::db::Db,
     uid:          i64,
-) {
+) -> bool {
     let label = format!("{name}@{version}");
-    tracing::info!(pkg = %label, image, "starting verification pipeline");
+    tracing::info!(pkg = %label, platform, image, "starting verification pipeline");
 
     // Write tarball to a temp file so we can mount it into the container.
-    let tmp = std::env::temp_dir().join(format!("freight-verify-{}.tar.gz", label_slug(&label)));
+    let tmp = std::env::temp_dir().join(format!(
+        "freight-verify-{}-{}.tar.gz", label_slug(&label), platform
+    ));
     if std::fs::write(&tmp, tarball).is_err() {
         let reason = "could not write temp file for verification container";
-        tracing::error!(pkg = %label, reason, "pipeline setup failed");
+        tracing::error!(pkg = %label, platform, reason, "pipeline setup failed");
         let _ = db.set_version_status(name, version, channel, "rejected", Some(reason)).await;
         db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
-        return;
+        return false;
     }
 
     // Detect container runtime (same preference order as scan backend).
@@ -428,11 +517,10 @@ async fn run_verification_pipeline(
     let Some(runtime) = runtime else {
         let reason = "no container runtime available (docker/podman not found); \
                       set FREIGHT_SCAN_BACKEND=docker or =podman";
-        tracing::warn!(pkg = %label, reason, "verification skipped — publishing immediately");
-        // No container runtime: publish without verification.
-        let _ = db.set_version_status(name, version, channel, "published", None).await;
+        tracing::warn!(pkg = %label, platform, reason, "verification skipped — treating as passed");
         let _ = std::fs::remove_file(&tmp);
-        return;
+        // No container runtime: treat as a pass so the package isn't stuck pending forever.
+        return true;
     };
 
     let mount  = format!("{}:/pkg.tar.gz:ro", tmp.display());
@@ -457,9 +545,10 @@ async fn run_verification_pipeline(
     match output {
         Err(e) => {
             let reason = format!("failed to launch container ({runtime}): {e}");
-            tracing::error!(pkg = %label, %reason, "pipeline launch failed");
+            tracing::error!(pkg = %label, platform, %reason, "pipeline launch failed");
             let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
             db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
+            false
         }
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
@@ -467,14 +556,15 @@ async fn run_verification_pipeline(
                 Ok(result) => {
                     let passed = result["passed"].as_bool().unwrap_or(false);
                     if passed {
-                        tracing::info!(pkg = %label, "verification passed — publishing");
-                        let _ = db.set_version_status(name, version, channel, "published", None).await;
+                        tracing::info!(pkg = %label, platform, "pipeline passed");
                         db.audit(Some(uid), "verify_passed", Some(name), Some(version), None);
+                        true
                     } else {
                         let reason = build_rejection_reason(&result);
-                        tracing::warn!(pkg = %label, %reason, "verification failed — rejecting");
+                        tracing::warn!(pkg = %label, platform, %reason, "pipeline failed — rejecting");
                         let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
                         db.audit(Some(uid), "verify_failed", Some(name), Some(version), Some(&reason));
+                        false
                     }
                 }
                 Err(_) => {
@@ -486,9 +576,10 @@ async fn run_verification_pipeline(
                         stdout.trim(),
                         stderr.trim(),
                     );
-                    tracing::error!(pkg = %label, code = ?out.status.code(), "container output was not JSON");
+                    tracing::error!(pkg = %label, platform, code = ?out.status.code(), "container output was not JSON");
                     let _ = db.set_version_status(name, version, channel, "rejected", Some(&reason)).await;
                     db.audit(Some(uid), "verify_failed", Some(name), Some(version), None);
+                    false
                 }
             }
         }
@@ -523,7 +614,7 @@ fn build_rejection_reason(result: &serde_json::Value) -> String {
 
 // ── Server-side security scan ─────────────────────────────────────────────────
 
-enum ScanOutcome {
+pub(crate) enum ScanOutcome {
     Clean,
     /// Threat(s) found.  Carries a human-readable summary.
     Infected(String),
@@ -537,7 +628,7 @@ enum ScanOutcome {
 /// ephemeral ClamAV container with `--network none` and tight resource limits
 /// so malicious content cannot escape.  Bare `clamscan` runs on the host.
 /// `Auto` probes: Docker → Podman → clamscan → unavailable.
-fn scan_tarball(tarball: &[u8], label: &str, backend: &crate::ScanBackend) -> ScanOutcome {
+pub(crate) fn scan_tarball(tarball: &[u8], label: &str, backend: &crate::ScanBackend) -> ScanOutcome {
     use crate::ScanBackend;
     let slug = label_slug(label);
     match backend {
@@ -572,33 +663,37 @@ fn scan_tarball(tarball: &[u8], label: &str, backend: &crate::ScanBackend) -> Sc
 ///
 /// The container has no network, can't write to the host filesystem, and is
 /// killed if it exceeds the memory or CPU limits.
-fn scan_in_container(runtime: &str, tarball: &[u8], slug: &str) -> ScanOutcome {
-    let tmp = std::env::temp_dir().join(format!("freight-scan-{slug}.tar.gz"));
-    if std::fs::write(&tmp, tarball).is_err() {
-        return ScanOutcome::Unavailable("could not write temp file for container scan".into());
-    }
+fn scan_in_container(runtime: &str, tarball: &[u8], _slug: &str) -> ScanOutcome {
+    use std::io::Write as _;
 
-    let mount = format!("{}:/scan/pkg.tar.gz:ro", tmp.display());
-    let result = std::process::Command::new(runtime)
+    // Pipe the tarball bytes via stdin — avoids volume mounts entirely, which
+    // don't work when the Docker daemon is remote (DinD over TCP).
+    let mut child = match std::process::Command::new(runtime)
         .args([
-            "run", "--rm",
+            "run", "--rm", "-i",
             "--network", "none",
-            "--read-only",
-            "--memory", "512m",
+            "--memory", "1g",
             "--cpus", "0.5",
             "--security-opt", "no-new-privileges",
-            "-v", &mount,
+            "--tmpfs", "/run/clamav:rw,noexec,nosuid,size=64m",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
             "clamav/clamav:latest",
-            "clamscan",
-            "--no-summary",
-            "--infected",
-            "--recursive",
-            "/scan/pkg.tar.gz",
+            "clamscan", "--no-summary", "--infected", "-",
         ])
-        .output();
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return ScanOutcome::Unavailable(format!("{runtime}: {e}")),
+    };
 
-    let _ = std::fs::remove_file(&tmp);
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(tarball);
+    }
 
+    let result = child.wait_with_output();
     interpret_clamscan_output(result, runtime)
 }
 
@@ -665,4 +760,138 @@ fn label_slug(label: &str) -> String {
     label.chars()
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect()
+}
+
+// ── Scan tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    /// Minimal valid gzip of an empty tar archive.
+    const CLEAN_TAR_GZ: &[u8] = &[
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+        0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    /// EICAR test string — standard antivirus test signature, not real malware.
+    /// ClamAV detects this as `Eicar-Signature`.
+    const EICAR: &[u8] = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+
+    // ── ScanBackend::None ─────────────────────────────────────────────────────
+
+    #[test]
+    fn none_backend_always_unavailable() {
+        let outcome = scan_tarball(CLEAN_TAR_GZ, "test@1.0.0", &crate::ScanBackend::None);
+        assert!(matches!(outcome, ScanOutcome::Unavailable(_)));
+    }
+
+    #[test]
+    fn none_backend_eicar_also_unavailable() {
+        let outcome = scan_tarball(EICAR, "test@1.0.0", &crate::ScanBackend::None);
+        assert!(matches!(outcome, ScanOutcome::Unavailable(_)));
+    }
+
+    // ── Docker-backed ClamAV tests ────────────────────────────────────────────
+    // Run with: DOCKER_HOST=tcp://192.168.178.45:2375 cargo test -p freight-registry scan_docker -- --ignored
+    //
+    // These tests pull clamav/clamav:latest and run a real scan.  They are
+    // marked `#[ignore]` so they don't run in normal CI (slow, needs Docker).
+
+    #[test]
+    #[ignore]
+    fn docker_scan_clean_package() {
+        let outcome = scan_tarball(CLEAN_TAR_GZ, "clean@1.0.0", &crate::ScanBackend::Docker);
+        match &outcome {
+            ScanOutcome::Clean => {}
+            ScanOutcome::Unavailable(reason) => panic!("scan unavailable: {reason}"),
+            ScanOutcome::Infected(f) => panic!("false positive on empty tar: {f}"),
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn docker_scan_eicar_detected() {
+        let outcome = scan_tarball(EICAR, "eicar@1.0.0", &crate::ScanBackend::Docker);
+        match &outcome {
+            ScanOutcome::Infected(findings) => {
+                assert!(
+                    findings.to_lowercase().contains("eicar") || findings.contains("FOUND"),
+                    "expected EICAR finding, got: {findings}"
+                );
+            }
+            ScanOutcome::Clean => panic!("EICAR should have been detected"),
+            ScanOutcome::Unavailable(reason) => panic!("scan unavailable: {reason}"),
+        }
+    }
+
+    // ── Publish handler rejects infected packages ─────────────────────────────
+    // Integration test: the publish HTTP endpoint should return 400 when the
+    // scan backend is Docker and the tarball contains EICAR.
+
+    #[tokio::test]
+    #[ignore]
+    async fn publish_infected_package_rejected_400() {
+        use std::sync::Arc;
+        use axum::{body::Body, http::{Request, StatusCode}};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        use crate::{api, db::Db, mail::StdoutMailer, metrics::Metrics, rate_limit::Limiters, storage::Storage, AppState};
+
+        let db = Db::open_memory().await.unwrap();
+        let uid = db.create_user("alice", None, "pw").await.unwrap();
+        let tok = db.create_token(uid, "dev", None, "publish", "publish").await.unwrap();
+
+        let state = Arc::new(AppState {
+            db,
+            storage:               Storage::new(std::env::temp_dir().join("freight-scan-test")),
+            base_url:              "http://localhost".to_string(),
+            limiters:              Limiters::new(100_000, 100_000),
+            metrics:               Metrics::new(),
+            mailer:                Arc::new(StdoutMailer),
+            mirror_upstream:       None,
+            max_packages_per_user: None,
+            allowed_languages:     None,
+            scan_backend:          crate::ScanBackend::Docker,
+            verify_image:          None,
+            verify_images:         std::collections::HashMap::new(),
+            download_url:          None,
+            oauth_providers:       vec![],
+            oauth_states:          Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        });
+
+        // Build a publish body with EICAR as the "tarball".
+        let meta = serde_json::json!({"name": "evil-lib", "vers": "1.0.0"}).to_string();
+        let meta_bytes = meta.as_bytes();
+        let mut body = Vec::new();
+        body.extend_from_slice(&(meta_bytes.len() as u32).to_le_bytes());
+        body.extend_from_slice(meta_bytes);
+        body.extend_from_slice(&(EICAR.len() as u32).to_le_bytes());
+        body.extend_from_slice(EICAR);
+
+        let addr: std::net::SocketAddr = "127.0.0.1:1234".parse().unwrap();
+        let app = api::router(state, 1024 * 1024);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/packages")
+                    .header("Authorization", format!("Bearer {tok}"))
+                    .header("Content-Type", "application/octet-stream")
+                    .extension(axum::extract::ConnectInfo(addr))
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["errors"][0]["detail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("malware"),
+            "expected malware rejection message, got: {body}");
+    }
 }

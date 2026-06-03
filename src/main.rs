@@ -110,7 +110,7 @@ enum Command {
         /// environment with no network access and tight resource limits.
         #[arg(long, env = "FREIGHT_SCAN_BACKEND", default_value = "auto")]
         scan_backend: freight_registry::ScanBackend,
-        /// Container image for the CI verification pipeline.
+        /// Default container image for the CI verification pipeline.
         /// When set, every source publish is held as `pending` until the
         /// container builds it, runs its tests, and scans it for malware.
         /// The container must output a JSON result to stdout (see docs).
@@ -118,6 +118,26 @@ enum Command {
         /// Example: ghcr.io/tinytinyterminator/freight-ci:latest
         #[arg(long, env = "FREIGHT_VERIFY_IMAGE")]
         verify_image: Option<String>,
+        /// Per-platform CI images. When set, packages are verified against
+        /// each matching platform before being made public.
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_LINUX")]
+        verify_image_linux: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_WINDOWS")]
+        verify_image_windows: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_FREEBSD")]
+        verify_image_freebsd: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_MACOS")]
+        verify_image_macos: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_OPENBSD")]
+        verify_image_openbsd: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_NETBSD")]
+        verify_image_netbsd: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_DRAGONFLY")]
+        verify_image_dragonfly: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_SOLARIS")]
+        verify_image_solaris: Option<String>,
+        #[arg(long, env = "FREIGHT_VERIFY_IMAGE_ANDROID")]
+        verify_image_android: Option<String>,
         /// Base URL of a separate download server (CDN, nginx, public S3 bucket, …).
         /// When set, /download endpoints return a 302 redirect here instead of
         /// streaming bytes through the registry server.  When absent and the S3
@@ -224,8 +244,10 @@ enum TokenCmd {
 async fn main() -> Result<()> {
     // Load config file before clap parses, so file values appear as env vars
     // that clap picks up (CLI flags and real env vars still take priority).
-    // OAuth provider configs are returned directly (they can't be env vars).
-    let (config_path, config_oauth) = config::load();
+    // OAuth provider configs and verify images are returned directly.
+    let (config_path, config_extras) = config::load();
+    let config_oauth = config_extras.oauth;
+    let mut config_verify_images = config_extras.verify_images;
     if let Some(ref path) = config_path {
         eprintln!("loaded config: {}", path.display());
     }
@@ -254,7 +276,11 @@ async fn main() -> Result<()> {
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
             mirror_upstream, max_packages_per_user, allowed_languages,
-            scan_backend, verify_image, download_url,
+            scan_backend, verify_image,
+            verify_image_linux, verify_image_windows, verify_image_freebsd,
+            verify_image_macos, verify_image_openbsd, verify_image_netbsd,
+            verify_image_dragonfly, verify_image_solaris, verify_image_android,
+            download_url,
             smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
@@ -359,6 +385,33 @@ async fn main() -> Result<()> {
                 tracing::info!("OAuth: no providers configured — password login only");
             }
 
+            // Merge per-platform verify images: CLI flags override config file.
+            {
+                let mut ins = |k: &str, v: Option<String>| {
+                    if let Some(img) = v { config_verify_images.insert(k.to_string(), img); }
+                };
+                ins("linux",     verify_image_linux);
+                ins("windows",   verify_image_windows);
+                ins("freebsd",   verify_image_freebsd);
+                ins("macos",     verify_image_macos);
+                ins("openbsd",   verify_image_openbsd);
+                ins("netbsd",    verify_image_netbsd);
+                ins("dragonfly", verify_image_dragonfly);
+                ins("solaris",   verify_image_solaris);
+                ins("android",   verify_image_android);
+                // Single --verify-image also acts as "default"
+                if let Some(ref img) = verify_image {
+                    config_verify_images.entry("default".to_string())
+                        .or_insert_with(|| img.clone());
+                }
+            }
+
+            if !config_verify_images.is_empty() {
+                tracing::info!("verify pipelines: {} platform(s) configured: {}",
+                    config_verify_images.len(),
+                    config_verify_images.keys().cloned().collect::<Vec<_>>().join(", "));
+            }
+
             let state = Arc::new(AppState {
                 db,
                 storage,
@@ -371,6 +424,7 @@ async fn main() -> Result<()> {
                 allowed_languages:    if allowed_languages.is_empty() { None } else { Some(allowed_languages) },
                 scan_backend,
                 verify_image,
+                verify_images:        config_verify_images,
                 download_url,
                 oauth_providers,
                 oauth_states:         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

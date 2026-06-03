@@ -86,7 +86,13 @@ pub struct AppState {
     /// Container image for the CI verification pipeline (build + test + scan).
     /// When `Some`, each source publish starts as `pending` and is only made
     /// public after the container job passes.  `None` publishes immediately.
+    /// Used as fallback when `verify_images` has no entry for a given platform.
     pub verify_image: Option<String>,
+    /// Per-platform CI images.  Keys: `"linux"`, `"windows"`, `"freebsd"`,
+    /// `"macos"`, `"openbsd"`, `"netbsd"`, `"dragonfly"`, `"solaris"`,
+    /// `"android"`, `"default"`.  When non-empty, replaces `verify_image`
+    /// and runs one verification task per matching platform.
+    pub verify_images: std::collections::HashMap<String, String>,
     /// Base URL of a separate download server.  When set, `/download` endpoints
     /// redirect there instead of streaming bytes through this server.
     /// See `config.rs` for the full priority chain.

@@ -33,6 +33,7 @@ async fn make_state() -> Arc<AppState> {
         allowed_languages:     None,
         scan_backend:          ScanBackend::None,
         verify_image:          None,
+        verify_images:         std::collections::HashMap::new(),
         download_url:          None,
         oauth_providers:       vec![],
         oauth_states:          Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

@@ -132,6 +132,28 @@ async function loadPackage(name, channel, selectedVersion) {
       `<a href="/?q=${encodeURIComponent(k)}" class="badge keyword">${esc(k)}</a>`
     ).join(' ');
 
+    // ── Build language badges ───────────────────────────────────────────────
+    const LANG_META = {
+      c:       { label: 'C',            color: '#555597' },
+      cpp:     { label: 'C++',          color: '#f34b7d' },
+      fortran: { label: 'Fortran',      color: '#4d41b1' },
+      asm:     { label: 'Assembly',     color: '#6e4c13' },
+      cuda:    { label: 'CUDA',         color: '#76b900' },
+      hip:     { label: 'HIP',          color: '#e8491d' },
+      opencl:  { label: 'OpenCL',       color: '#c1272d' },
+      ispc:    { label: 'ISPC',         color: '#008080' },
+      d:       { label: 'D',            color: '#ba595e' },
+      ada:     { label: 'Ada',          color: '#02f88c' },
+      objc:    { label: 'Objective-C',  color: '#438eff' },
+      objcpp:  { label: 'Obj-C++',      color: '#6866fb' },
+      zig:     { label: 'Zig',          color: '#ec915c' },
+    };
+    const pkgLangs = latest.languages ?? [];
+    const langHtml = pkgLangs.map(l => {
+      const m = LANG_META[l] ?? { label: l, color: '#666' };
+      return `<span class="badge lang-badge" style="background:${m.color};color:#fff" title="${esc(l)}">${esc(m.label)}</span>`;
+    }).join(' ');
+
     // ── Build versions table ───────────────────────────────────────────────
     const sortedVersions = (pkg.versions ?? []).slice().sort((a, b) => cmpVersion(b.version, a.version));
     const versionsHtml = sortedVersions.map(v => {
@@ -143,6 +165,7 @@ async function loadPackage(name, channel, selectedVersion) {
             ${v.yanked ? ' <span style="color:#f85149;font-size:11px">[yanked]</span>' : ''}
             ${isActive ? ' <span style="font-size:11px;color:var(--muted)">(viewing)</span>' : ''}</td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${esc((v.checksum ?? '').slice(0,12))}…</td>
+        <td>${(v.languages ?? []).map(l => { const m = LANG_META[l] ?? {label:l,color:'#666'}; return `<span class="badge lang-badge" style="background:${m.color};color:#fff;font-size:10px">${esc(m.label)}</span>`; }).join(' ')}</td>
         <td style="color:var(--green)">${fmtNum(v.downloads)}</td>
         <td>
           <a href="/api/v1/packages/${esc(name)}/${esc(v.version)}/download"
@@ -202,6 +225,7 @@ async function loadPackage(name, channel, selectedVersion) {
         <p class="pkg-desc-full">${esc(pkg.description ?? '')}</p>
         <div class="pkg-meta" style="margin-bottom:8px">
           <span class="badge version">v${esc(latest.version ?? pkg.latest)}</span>
+          ${langHtml}
           ${latest.build_system ? `<span class="badge">${esc(latest.build_system)}</span>` : ''}
           ${totalDownloads ? `<span class="badge dl">↓ ${fmtNum(totalDownloads)} total</span>` : ''}
           ${kwHtml}
@@ -221,6 +245,7 @@ async function loadPackage(name, channel, selectedVersion) {
                 <tr>
                   <th>Version</th>
                   <th>Checksum</th>
+                  <th>Languages</th>
                   <th>Downloads</th>
                   <th>Download</th>
                 </tr>
@@ -269,6 +294,13 @@ async function loadPackage(name, channel, selectedVersion) {
               </li>` : ''}
             </ul>
           </div>
+
+          <!-- Languages -->
+          ${langHtml ? `
+          <div class="sidebar-box">
+            <h3>Languages</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">${langHtml}</div>
+          </div>` : ''}
 
           <!-- Owners -->
           ${ownerList.length ? `

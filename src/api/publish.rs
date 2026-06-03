@@ -166,6 +166,14 @@ pub async fn publish(
         let _ = state.storage.save_readme(&meta.name, &meta.vers, content.as_bytes()).await;
     }
 
+    // Extract language keys from freight.toml in the tarball (e.g. "c,cpp").
+    let languages_str: Option<String> = if is_metadata_only {
+        None
+    } else {
+        let langs = extract_languages(tarball);
+        if langs.is_empty() { None } else { Some(langs.join(",")) }
+    };
+
     // Metadata-only stubs are published immediately (no source to verify).
     // Source packages start as `pending` when a verify_image is configured,
     // or are published immediately when no pipeline is set up.
@@ -186,6 +194,7 @@ pub async fn publish(
             meta.upstream_url.as_deref(),
             meta.build_system.as_deref(),
             meta.supports.as_deref(),
+            languages_str.as_deref(),
             needs_verification,
         )
         .await?;

@@ -48,6 +48,9 @@ async fn get_package_local(
         let prebuilt_triples: Vec<&str> = prebuilts.iter().map(|p| p.triple.as_str()).collect();
         let deps: serde_json::Value = serde_json::from_str(&v.dependencies).unwrap_or(json!({}));
         let effective_download_url = v.upstream_url.clone().unwrap_or(url);
+        let languages: Vec<&str> = v.languages.as_deref()
+            .map(|s| s.split(',').filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default();
         versions_json.push(json!({
             "version":          v.version,
             "checksum":         v.checksum,
@@ -59,6 +62,7 @@ async fn get_package_local(
             "downloads":        v.downloads,
             "prebuilt_triples": prebuilt_triples,
             "dependencies":     deps,
+            "languages":        languages,
         }));
     }
 

@@ -136,6 +136,9 @@ pub struct VersionRow {
     pub status:        String,
     /// Human-readable reason when `status = 'rejected'`.
     pub status_reason: Option<String>,
+    /// Comma-separated language keys from `[language.*]` in freight.toml,
+    /// e.g. `"c,cpp"` or `"fortran"`.  `None` for pre-migration rows.
+    pub languages:     Option<String>,
 }
 
 impl VersionRow {
@@ -671,7 +674,7 @@ impl Db {
         let Some(pkg) = pkg else { return Ok(None) };
 
         let mut versions: Vec<VersionRow> = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system, supports, status, status_reason FROM versions
+                    upstream_url, build_system, supports, status, status_reason, languages FROM versions
              WHERE package_id = ? AND status = 'published'"))
         .bind(pkg.id)
         .fetch_all(&self.pool)
@@ -685,7 +688,7 @@ impl Db {
     /// Fetch a single version row. Used for download checksum verification and yanked check.
     pub async fn get_version(&self, name: &str, version: &str, channel: &str) -> Result<Option<VersionRow>> {
         let row = sqlx::query_as(&self.q_sql("SELECT version, checksum, yanked, downloads, dependencies,
-                    upstream_url, build_system, supports, status, status_reason FROM versions
+                    upstream_url, build_system, supports, status, status_reason, languages FROM versions
              WHERE version = ?
                AND package_id = (SELECT id FROM packages WHERE lower(name) = lower(?) AND channel = ?)"))
         .bind(version)
@@ -815,7 +818,8 @@ impl Db {
                     v.yanked        AS v_yanked,         v.downloads      AS v_downloads,
                     v.dependencies  AS v_deps,           v.upstream_url   AS v_upstream_url,
                     v.build_system  AS v_build_system,   v.supports       AS v_supports,
-                    v.status        AS v_status,         v.status_reason  AS v_status_reason
+                    v.status        AS v_status,         v.status_reason  AS v_status_reason,
+                    v.languages     AS v_languages
              FROM packages p
              LEFT JOIN versions v ON v.package_id = p.id
                AND v.version = COALESCE(p.latest_version,
@@ -868,6 +872,7 @@ impl Db {
                     supports:      row.try_get("v_supports").unwrap_or_default(),
                     status:        row.try_get("v_status").unwrap_or_else(|_| "published".to_string()),
                     status_reason: row.try_get("v_status_reason").unwrap_or_default(),
+                    languages:     row.try_get("v_languages").unwrap_or_default(),
                 }),
                 Err(_) => None,
             };
@@ -896,6 +901,7 @@ impl Db {
         upstream_url: Option<&str>,
         build_system: Option<&str>,
         supports: Option<&str>,
+        languages: Option<&str>,
         // true  → status='pending' (goes through CI pipeline before becoming public)
         // false → status='published' (metadata-only stubs are pre-verified)
         initial_status_pending: bool,
@@ -920,8 +926,8 @@ impl Db {
         .await?;
 
         let initial_status = if initial_status_pending { "pending" } else { "published" };
-        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system, supports, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"))
+        sqlx::query(&self.q_sql("INSERT INTO versions (package_id, version, checksum, dependencies, upstream_url, build_system, supports, status, languages)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
         .bind(pkg.id)
         .bind(version)
         .bind(checksum)
@@ -930,6 +936,7 @@ impl Db {
         .bind(build_system)
         .bind(supports)
         .bind(initial_status)
+        .bind(languages)
         .execute(&self.pool)
         .await?;
 

@@ -659,7 +659,8 @@ footer a:hover { color: var(--text); }
 
 .prebuilt-list { display: flex; flex-direction: column; gap: 8px; }
 .prebuilt-row  { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.badge.prebuilt { font-family: var(--font-mono); font-size: 12px; border-color: rgba(120,160,220,0.3); color: var(--accent); }
+.badge.prebuilt  { font-family: var(--font-mono); font-size: 12px; border-color: rgba(120,160,220,0.3); color: var(--accent); }
+.badge.lang-badge { border: none; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; opacity: 0.92; }
 
 /* ── Version highlight ────────────────────────────────────────────────────── */
 

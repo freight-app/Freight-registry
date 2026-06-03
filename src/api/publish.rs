@@ -432,11 +432,11 @@ async fn run_verification_pipeline(
             "run", "--rm",
             "--network",      "none",
             "--read-only",
-            "--memory",       "1g",
+            "--memory",       "500m",
             "--cpus",         "1.0",
             "--security-opt", "no-new-privileges",
             "--tmpfs",        "/tmp:rw,noexec,nosuid,size=512m",
-            "--tmpfs",        "/build:rw,noexec,nosuid,size=2g",
+            "--tmpfs",        "/build:rw,noexec,nosuid,size=500m",
             "-v", &mount,
             image,
             "/pkg.tar.gz",   // passed as first argument to the container entrypoint

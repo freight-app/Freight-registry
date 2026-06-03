@@ -189,29 +189,32 @@ pub async fn publish(
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
     tracing::info!(user = %auth.user.username, channel, "published {}@{}", meta.name, meta.vers);
 
-    // Kick off an async tarball security scan.  Runs in the background so it
-    // never blocks the publish response.  If ClamAV is not installed on the
-    // server, the scan is silently skipped.
+    // Kick off an async tarball security scan in the background.
+    // Never blocks the publish response.
     if !is_metadata_only {
         let tarball_bytes = tarball.to_vec();
-        let pkg_label    = format!("{}@{}", meta.name, meta.vers);
-        let db           = state.db.clone();
-        let uid          = auth.user.id;
+        let pkg_label     = format!("{}@{}", meta.name, meta.vers);
+        let db            = state.db.clone();
+        let uid           = auth.user.id;
+        let backend       = state.scan_backend.clone();
         tokio::spawn(async move {
-            match scan_tarball_clamav(&tarball_bytes, &pkg_label) {
-                ScanOutcome::Clean        => {}
-                ScanOutcome::Infected(f)  => {
-                    tracing::error!(pkg = %pkg_label, findings = %f, "ClamAV: malware detected");
-                    // Audit the finding so admins can review it.
+            match scan_tarball(&tarball_bytes, &pkg_label, &backend) {
+                ScanOutcome::Clean => {
+                    tracing::debug!(pkg = %pkg_label, "scan: clean");
+                }
+                ScanOutcome::Infected(findings) => {
+                    tracing::error!(pkg = %pkg_label, findings = %findings, "scan: malware detected");
                     db.audit(
                         Some(uid),
                         "malware_detected",
                         Some(&pkg_label),
-                        Some(&f),
+                        Some(&findings),
                         None,
                     );
                 }
-                ScanOutcome::Unavailable  => {}
+                ScanOutcome::Unavailable(reason) => {
+                    tracing::debug!(pkg = %pkg_label, %reason, "scan: unavailable");
+                }
             }
         });
     }
@@ -367,60 +370,144 @@ fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {
 
 enum ScanOutcome {
     Clean,
+    /// Threat(s) found.  Carries a human-readable summary.
     Infected(String),
-    Unavailable,
+    /// Scanner not available or encountered an error.
+    Unavailable(String),
 }
 
-/// Scan a tarball with ClamAV (`clamscan`) if it is installed on the server.
-/// Writes the tarball to a temp file, scans it, then removes the file.
-/// This runs in a `tokio::spawn` background task so it never blocks requests.
-fn scan_tarball_clamav(tarball: &[u8], label: &str) -> ScanOutcome {
-    // Only attempt the scan if clamscan is on PATH.
-    let clamscan = match which_clamscan() {
-        Some(p) => p,
-        None    => return ScanOutcome::Unavailable,
-    };
+/// Dispatch to the appropriate scan backend.
+///
+/// Container backends (Docker/Podman) mount the tarball read-only inside an
+/// ephemeral ClamAV container with `--network none` and tight resource limits
+/// so malicious content cannot escape.  Bare `clamscan` runs on the host.
+/// `Auto` probes: Docker → Podman → clamscan → unavailable.
+fn scan_tarball(tarball: &[u8], label: &str, backend: &crate::ScanBackend) -> ScanOutcome {
+    use crate::ScanBackend;
+    let slug = label_slug(label);
+    match backend {
+        ScanBackend::None     => ScanOutcome::Unavailable("scanning disabled".into()),
+        ScanBackend::Docker   => scan_in_container("docker", tarball, &slug),
+        ScanBackend::Podman   => scan_in_container("podman", tarball, &slug),
+        ScanBackend::Clamscan => scan_host_clamscan(tarball, &slug),
+        ScanBackend::Auto     => {
+            if has_executable("docker")  { return scan_in_container("docker", tarball, &slug); }
+            if has_executable("podman")  { return scan_in_container("podman", tarball, &slug); }
+            if has_executable("clamscan"){ return scan_host_clamscan(tarball, &slug); }
+            ScanOutcome::Unavailable(
+                "no scan backend available (docker/podman/clamscan not found)".into()
+            )
+        }
+    }
+}
 
-    // Write to a temporary file.
-    let tmp_path = std::env::temp_dir().join(format!("freight-scan-{}.tar.gz", label_slug(label)));
-    if std::fs::write(&tmp_path, tarball).is_err() {
-        return ScanOutcome::Unavailable;
+// ── Container-based scanning ──────────────────────────────────────────────────
+
+/// Scan inside a Docker or Podman container.
+///
+/// Steps:
+///   1. Write tarball to a temp file on the host.
+///   2. Run `<runtime> run --rm --network none --read-only
+///              -v <tmp>:/scan/pkg.tar.gz:ro
+///              --memory 512m --cpus 0.5
+///              clamav/clamav:latest
+///              clamscan --no-summary --infected --recursive /scan/pkg.tar.gz`
+///   3. Parse stdout for FOUND lines.
+///   4. Remove temp file.
+///
+/// The container has no network, can't write to the host filesystem, and is
+/// killed if it exceeds the memory or CPU limits.
+fn scan_in_container(runtime: &str, tarball: &[u8], slug: &str) -> ScanOutcome {
+    let tmp = std::env::temp_dir().join(format!("freight-scan-{slug}.tar.gz"));
+    if std::fs::write(&tmp, tarball).is_err() {
+        return ScanOutcome::Unavailable("could not write temp file for container scan".into());
     }
 
-    let result = std::process::Command::new(&clamscan)
-        .args(["--no-summary", "--infected", tmp_path.to_str().unwrap_or("")])
+    let mount = format!("{}:/scan/pkg.tar.gz:ro", tmp.display());
+    let result = std::process::Command::new(runtime)
+        .args([
+            "run", "--rm",
+            "--network", "none",
+            "--read-only",
+            "--memory", "512m",
+            "--cpus", "0.5",
+            "--security-opt", "no-new-privileges",
+            "-v", &mount,
+            "clamav/clamav:latest",
+            "clamscan",
+            "--no-summary",
+            "--infected",
+            "--recursive",
+            "/scan/pkg.tar.gz",
+        ])
         .output();
 
-    let _ = std::fs::remove_file(&tmp_path);
+    let _ = std::fs::remove_file(&tmp);
 
+    interpret_clamscan_output(result, runtime)
+}
+
+// ── Host clamscan (no container) ──────────────────────────────────────────────
+
+fn scan_host_clamscan(tarball: &[u8], slug: &str) -> ScanOutcome {
+    let tmp = std::env::temp_dir().join(format!("freight-scan-{slug}.tar.gz"));
+    if std::fs::write(&tmp, tarball).is_err() {
+        return ScanOutcome::Unavailable("could not write temp file for host scan".into());
+    }
+
+    let result = std::process::Command::new("clamscan")
+        .args(["--no-summary", "--infected", "--recursive",
+               tmp.to_str().unwrap_or("")])
+        .output();
+
+    let _ = std::fs::remove_file(&tmp);
+
+    interpret_clamscan_output(result, "clamscan")
+}
+
+// ── Shared output parser ──────────────────────────────────────────────────────
+
+fn interpret_clamscan_output(
+    result: std::io::Result<std::process::Output>,
+    scanner: &str,
+) -> ScanOutcome {
     match result {
         Ok(out) if out.status.success() => ScanOutcome::Clean,
         Ok(out) => {
-            let findings: Vec<_> = String::from_utf8_lossy(&out.stdout)
+            let stdout   = String::from_utf8_lossy(&out.stdout);
+            let findings: Vec<_> = stdout
                 .lines()
                 .filter(|l| l.contains("FOUND"))
                 .map(str::to_string)
                 .collect();
             if findings.is_empty() {
-                // Non-zero exit without FOUND lines = scanner error (stale DB, etc.).
-                tracing::warn!(scanner = %clamscan, "clamscan exited non-zero but found no threats — may need database update");
-                ScanOutcome::Clean
+                // Non-zero without FOUND = scanner error (stale DB, image pull failure, etc.)
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!(
+                    scanner, code = ?out.status.code(),
+                    stderr = %stderr.trim(),
+                    "clamscan exited non-zero with no findings — DB may be stale"
+                );
+                ScanOutcome::Unavailable(format!("{scanner} exited with error"))
             } else {
                 ScanOutcome::Infected(findings.join("; "))
             }
         }
-        Err(_) => ScanOutcome::Unavailable,
+        Err(e) => ScanOutcome::Unavailable(format!("{scanner}: {e}")),
     }
 }
 
-fn which_clamscan() -> Option<String> {
-    std::env::var_os("PATH")?
-        .to_string_lossy()
-        .split(':')
-        .map(|dir| format!("{dir}/clamscan"))
-        .find(|p| std::path::Path::new(p).is_file())
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+fn has_executable(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| p.to_string_lossy().split(':')
+            .any(|dir| std::path::Path::new(dir).join(name).is_file()))
+        .unwrap_or(false)
 }
 
 fn label_slug(label: &str) -> String {
-    label.chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect()
+    label.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect()
 }

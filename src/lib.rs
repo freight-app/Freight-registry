@@ -21,6 +21,40 @@ use oauth::OAuthProvider;
 use rate_limit::Limiters;
 use storage::Storage;
 
+/// How uploaded tarballs are scanned for malware after a successful publish.
+///
+/// The registry operator sets this via `--scan-backend` or
+/// `FREIGHT_SCAN_BACKEND`.  When `Auto`, the server probes for Docker, then
+/// Podman, then bare `clamscan` at startup and uses the first it finds.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ScanBackend {
+    /// Probe at startup: Docker → Podman → clamscan → heuristics.
+    #[default]
+    Auto,
+    /// Run `clamscan` inside a Docker container (fully isolated).
+    Docker,
+    /// Run `clamscan` inside a Podman container (rootless, fully isolated).
+    Podman,
+    /// Run `clamscan` directly on the host (no container isolation).
+    Clamscan,
+    /// No scanning.
+    None,
+}
+
+impl std::str::FromStr for ScanBackend {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto"     => Ok(Self::Auto),
+            "docker"   => Ok(Self::Docker),
+            "podman"   => Ok(Self::Podman),
+            "clamscan" => Ok(Self::Clamscan),
+            "none"     => Ok(Self::None),
+            other      => Err(format!("unknown scan backend `{other}`; use auto|docker|podman|clamscan|none")),
+        }
+    }
+}
+
 /// In-flight OAuth state entry (CSRF protection).
 pub struct PendingOAuthState {
     pub created_at:    Instant,
@@ -47,6 +81,8 @@ pub struct AppState {
     /// (via `[language.<key>]` in `freight.toml`) are accepted.  `None` means
     /// all languages are allowed.  Example: `["c", "cpp", "fortran"]`.
     pub allowed_languages: Option<Vec<String>>,
+    /// How uploaded tarballs are scanned for malware after publish.
+    pub scan_backend: ScanBackend,
     /// Base URL of a separate download server.  When set, `/download` endpoints
     /// redirect there instead of streaming bytes through this server.
     /// See `config.rs` for the full priority chain.

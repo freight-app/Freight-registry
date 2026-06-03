@@ -43,6 +43,10 @@ pub struct AppState {
     /// Maximum number of packages a non-admin user may own simultaneously.
     /// `None` means no limit. Admins are always exempt.
     pub max_packages_per_user: Option<u32>,
+    /// If `Some`, only packages that declare at least one of these languages
+    /// (via `[language.<key>]` in `freight.toml`) are accepted.  `None` means
+    /// all languages are allowed.  Example: `["c", "cpp", "fortran"]`.
+    pub allowed_languages: Option<Vec<String>>,
     /// Base URL of a separate download server.  When set, `/download` endpoints
     /// redirect there instead of streaming bytes through this server.
     /// See `config.rs` for the full priority chain.

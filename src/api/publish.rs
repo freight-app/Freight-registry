@@ -104,6 +104,29 @@ pub async fn publish(
         return Err(ApiError::bad_request("tarball is not a valid gzip archive"));
     }
 
+    // Language allowlist: reject packages whose declared languages are not in
+    // the registry's configured set.  Metadata-only stubs bypass this check
+    // because they don't carry source (their language can't be verified).
+    if let Some(ref allowed) = state.allowed_languages {
+        if !is_metadata_only {
+            let pkg_langs = extract_languages(tarball);
+            if pkg_langs.is_empty() {
+                return Err(ApiError::bad_request(
+                    "could not determine package languages from freight.toml inside tarball — \
+                     declare at least one [language.*] section"
+                ));
+            }
+            if !pkg_langs.iter().any(|l| allowed.contains(l)) {
+                return Err(ApiError::bad_request(format!(
+                    "this registry only accepts packages written in [{}]; \
+                     package declares [{}]",
+                    allowed.join(", "),
+                    pkg_langs.join(", "),
+                )));
+            }
+        }
+    }
+
     let checksum = if is_metadata_only {
         String::new()
     } else {
@@ -202,6 +225,27 @@ pub async fn publish(
 /// Extract `[dependencies]` from `freight.toml` inside the tarball.
 /// Returns a JSON object string, e.g. `{"zlib":"*","openssl":"*"}`.
 /// Returns `"{}"` on any error (missing file, parse failure, etc.).
+/// Extract the `[language.*]` keys from `freight.toml` inside the tarball.
+/// Returns a sorted list of lowercase language identifiers, e.g. `["c", "cpp"]`.
+/// Returns an empty vec if `freight.toml` is absent or has no `[language]` table.
+fn extract_languages(tarball: &[u8]) -> Vec<String> {
+    let toml_src = match extract_file(tarball, "freight.toml") {
+        Some(s) => s,
+        None    => return vec![],
+    };
+    let value: toml::Value = match toml::from_str(&toml_src) {
+        Ok(v)  => v,
+        Err(_) => return vec![],
+    };
+    let mut langs: Vec<String> = value
+        .get("language")
+        .and_then(toml::Value::as_table)
+        .map(|t| t.keys().map(|k| k.to_ascii_lowercase()).collect())
+        .unwrap_or_default();
+    langs.sort();
+    langs
+}
+
 fn extract_dependencies(tarball: &[u8]) -> String {
     let deps = extract_dependencies_inner(tarball).unwrap_or_default();
     serde_json::to_string(&deps).unwrap_or_else(|_| "{}".to_string())

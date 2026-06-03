@@ -96,6 +96,13 @@ enum Command {
         /// Maximum number of packages a non-admin user may own (omit for no limit)
         #[arg(long, env = "FREIGHT_MAX_PACKAGES_PER_USER")]
         max_packages_per_user: Option<u32>,
+        /// Comma-separated list of languages this registry accepts.  Packages
+        /// that do not declare at least one matching language in their
+        /// freight.toml are rejected at publish time.  Omit to allow all.
+        /// Example: --allowed-languages c,cpp,fortran
+        /// Env: FREIGHT_ALLOWED_LANGUAGES=c,cpp,fortran
+        #[arg(long, env = "FREIGHT_ALLOWED_LANGUAGES", value_delimiter = ',')]
+        allowed_languages: Vec<String>,
         /// Base URL of a separate download server (CDN, nginx, public S3 bucket, …).
         /// When set, /download endpoints return a 302 redirect here instead of
         /// streaming bytes through the registry server.  When absent and the S3
@@ -231,7 +238,7 @@ async fn main() -> Result<()> {
             bind, base_url, max_upload_mb, audit_log_ttl_days,
             rate_limit_read, rate_limit_write,
             s3_bucket, s3_endpoint, s3_key_id, s3_secret, s3_region,
-            mirror_upstream, max_packages_per_user, download_url,
+            mirror_upstream, max_packages_per_user, allowed_languages, download_url,
             smtp_host, smtp_port, smtp_username, smtp_password, smtp_from, smtp_tls,
         } => {
             let storage = match s3_bucket {
@@ -345,6 +352,7 @@ async fn main() -> Result<()> {
                 mailer,
                 mirror_upstream:      mirror_upstream.map(|u| u.trim_end_matches('/').to_string()),
                 max_packages_per_user,
+                allowed_languages:    if allowed_languages.is_empty() { None } else { Some(allowed_languages) },
                 download_url,
                 oauth_providers,
                 oauth_states:         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

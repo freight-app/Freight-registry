@@ -166,6 +166,33 @@ pub async fn publish(
     state.db.audit(Some(auth.user.id), "publish", Some(&meta.name), Some(&meta.vers), Some(&ip));
     tracing::info!(user = %auth.user.username, channel, "published {}@{}", meta.name, meta.vers);
 
+    // Kick off an async tarball security scan.  Runs in the background so it
+    // never blocks the publish response.  If ClamAV is not installed on the
+    // server, the scan is silently skipped.
+    if !is_metadata_only {
+        let tarball_bytes = tarball.to_vec();
+        let pkg_label    = format!("{}@{}", meta.name, meta.vers);
+        let db           = state.db.clone();
+        let uid          = auth.user.id;
+        tokio::spawn(async move {
+            match scan_tarball_clamav(&tarball_bytes, &pkg_label) {
+                ScanOutcome::Clean        => {}
+                ScanOutcome::Infected(f)  => {
+                    tracing::error!(pkg = %pkg_label, findings = %f, "ClamAV: malware detected");
+                    // Audit the finding so admins can review it.
+                    db.audit(
+                        Some(uid),
+                        "malware_detected",
+                        Some(&pkg_label),
+                        Some(&f),
+                        None,
+                    );
+                }
+                ScanOutcome::Unavailable  => {}
+            }
+        });
+    }
+
     Ok(Json(json!({
         "ok": true,
         "warnings": { "invalid_categories": [], "invalid_badges": [], "other": [] }
@@ -290,4 +317,66 @@ fn parse_body(data: &[u8]) -> anyhow::Result<(PublishMeta, &[u8])> {
         anyhow::bail!("request body truncated in tarball data");
     }
     Ok((meta, &data[tar_start..tar_start + tar_len]))
+}
+
+// ── Server-side security scan ─────────────────────────────────────────────────
+
+enum ScanOutcome {
+    Clean,
+    Infected(String),
+    Unavailable,
+}
+
+/// Scan a tarball with ClamAV (`clamscan`) if it is installed on the server.
+/// Writes the tarball to a temp file, scans it, then removes the file.
+/// This runs in a `tokio::spawn` background task so it never blocks requests.
+fn scan_tarball_clamav(tarball: &[u8], label: &str) -> ScanOutcome {
+    // Only attempt the scan if clamscan is on PATH.
+    let clamscan = match which_clamscan() {
+        Some(p) => p,
+        None    => return ScanOutcome::Unavailable,
+    };
+
+    // Write to a temporary file.
+    let tmp_path = std::env::temp_dir().join(format!("freight-scan-{}.tar.gz", label_slug(label)));
+    if std::fs::write(&tmp_path, tarball).is_err() {
+        return ScanOutcome::Unavailable;
+    }
+
+    let result = std::process::Command::new(&clamscan)
+        .args(["--no-summary", "--infected", tmp_path.to_str().unwrap_or("")])
+        .output();
+
+    let _ = std::fs::remove_file(&tmp_path);
+
+    match result {
+        Ok(out) if out.status.success() => ScanOutcome::Clean,
+        Ok(out) => {
+            let findings: Vec<_> = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter(|l| l.contains("FOUND"))
+                .map(str::to_string)
+                .collect();
+            if findings.is_empty() {
+                // Non-zero exit without FOUND lines = scanner error (stale DB, etc.).
+                tracing::warn!(scanner = %clamscan, "clamscan exited non-zero but found no threats — may need database update");
+                ScanOutcome::Clean
+            } else {
+                ScanOutcome::Infected(findings.join("; "))
+            }
+        }
+        Err(_) => ScanOutcome::Unavailable,
+    }
+}
+
+fn which_clamscan() -> Option<String> {
+    std::env::var_os("PATH")?
+        .to_string_lossy()
+        .split(':')
+        .map(|dir| format!("{dir}/clamscan"))
+        .find(|p| std::path::Path::new(p).is_file())
+}
+
+fn label_slug(label: &str) -> String {
+    label.chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect()
 }

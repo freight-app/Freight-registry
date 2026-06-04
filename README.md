@@ -12,12 +12,14 @@ Self-hosted registry server for the [freight](https://github.com/freight-app/Fre
 - **Audit log** — every login, publish, yank, and unyank recorded asynchronously; optional TTL pruning (`--audit-log-ttl-days`)
 - **TOTP / 2FA** — per-account opt-in; enroll via `POST /api/v1/me/totp/enroll`; required at login when enabled
 - **Refresh tokens** — login returns an access token + a 30-day refresh token; exchange at `POST /api/v1/auth/refresh`
-- **Email verification** — verification link logged to stdout on register (no SMTP)
-- **Password reset** — reset link logged to stdout; no SMTP required
+- **Email verification** — verification link sent by SMTP when configured, otherwise logged to stdout
+- **Password reset** — reset link logged to stdout when SMTP is not configured
+- **SMTP delivery** — optional real email delivery via `[serve.smtp]`, CLI flags, or environment variables
 - **CORS** — permissive `CorsLayer` (any origin); override in code or via a reverse-proxy for stricter policies
 - **Security headers** — `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` on all responses
-- **SQLite storage** — single-file database, WAL mode; no external DB required
-- **Zero runtime deps** — reverse-proxy for TLS; everything else is self-contained
+- **SQLite or PostgreSQL** — single-file SQLite by default; PostgreSQL when `DATABASE_URL` is set
+- **Local or S3-compatible blob storage** — local tarballs by default; S3/MinIO when S3 settings are supplied
+- **Optional integrations by configuration** — S3, SMTP, OAuth/OIDC, mirror mode, external downloads, and CI verification are compiled in but inactive until configured by TOML, CLI flags, or environment variables
 
 ## Quick start
 
@@ -98,6 +100,19 @@ The raw token is printed once on `add` and never stored in plain text. Tokens ex
 | Flag | Env | Default | Description |
 |---|---|---|---|
 | `--data <dir>` | `FREIGHT_DATA_DIR` | `/var/lib/freight-registry` | Directory for `registry.db` and tarball storage |
+
+## Optional integrations
+
+The registry binary includes the supported backends by default, but uses the local, self-contained path unless configuration activates an integration.
+
+| Integration | Activation |
+|---|---|
+| PostgreSQL | Set `DATABASE_URL=postgres://...` or `url = "postgres://..."` in the config file |
+| S3 / MinIO storage | Set `--s3-bucket` or `[serve.s3] bucket = "...";` provide credentials with `FREIGHT_S3_KEY_ID` and `FREIGHT_S3_SECRET` or CLI flags |
+| SMTP email | Set `--smtp-host` or `[serve.smtp] host = "...";` provide `FREIGHT_SMTP_PASSWORD` or `--smtp-password` when the server requires auth |
+| OAuth / OIDC | Add `[[serve.oauth]]` entries, or use the GitHub/GitLab/Google environment variable presets |
+| External download server | Set `--download-url` / `FREIGHT_DOWNLOAD_URL` / `[serve] download_url = "..."` |
+| CI verification | Set `--verify-image`, per-platform `--verify-image-*`, or `[serve.verify]` entries |
 
 ## Connecting a freight client
 

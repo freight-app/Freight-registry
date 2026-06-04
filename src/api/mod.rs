@@ -174,9 +174,6 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         // /style.css, /app.js, etc. → served by ServeDir fallback
         .route("/",                get(|()| serve_page("index.html")))
         .route("/graph",           get(|()| serve_page("graph.html")))
-        .route("/docs",            get(|()| serve_page("docs/index.html")))
-        .route("/docs/",           get(|()| serve_page("docs/index.html")))
-        .route("/install",         get(|()| serve_page("install.html")))
         .route("/packages/:_name",      get(|()| serve_page("package.html")))
         .route("/packages/:_name/docs", get(|()| serve_page("docs.html")))
         .route("/login",           get(|()| serve_page("login.html")))

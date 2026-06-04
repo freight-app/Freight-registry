@@ -30,21 +30,22 @@ rate_limit_write   = 10                # requests/minute/IP for publish/yank
 # download_url = "https://downloads.freight.example.com"
 
 # Mode 3 — S3 / MinIO with presigned URLs (no download_url needed)
+# Credentials are supplied with FREIGHT_S3_KEY_ID and FREIGHT_S3_SECRET
+# or the matching CLI flags, not in this file.
 # [serve.s3]
 # bucket   = "freight-packages"
 # endpoint = "http://minio:9000"       # omit for real AWS
-# key_id   = "AKIAIOSFODNN7EXAMPLE"
-# secret   = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 # region   = "us-east-1"
 
 # ── Email delivery ─────────────────────────────────────────────────────────────
 # Omit this section to log verification / reset links to stdout instead.
+# Password is supplied with FREIGHT_SMTP_PASSWORD or --smtp-password,
+# not in this file.
 
 # [serve.smtp]
 # host     = "smtp.example.com"
 # port     = 587                       # 587 STARTTLS (default), 465 TLS, 25 plain
 # username = "noreply@example.com"
-# password = "secret"
 # from     = "Freight Registry <noreply@example.com>"
 # tls      = "starttls"                # "starttls" (default), "tls", or "none"
 

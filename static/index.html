@@ -22,8 +22,6 @@
     <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
   </div>
   <div class="nav-links">
-    <a href="/docs/">Docs</a>
-    <a href="/install">Install</a>
     <a href="https://github.com/freight-app/freight-registry" target="_blank">GitHub</a>
     <a id="nav-auth" href="/login">Login</a>
   </div>
@@ -39,10 +37,10 @@
 
 <!-- Hero (hidden when a search query is active) -->
 <div id="hero" class="hero">
-  <h1>The package registry for<br>C, C++, and friends</h1>
-  <p>Find and publish libraries for C, C++, Fortran, CUDA, HIP, D, Ada, and more.</p>
+  <h1>Freight Registry</h1>
+  <p>Search packages published to this registry.</p>
   <div class="search-wrap">
-    <input type="search" id="hero-q" placeholder="Search 10,000+ packages…" autocomplete="off">
+    <input type="search" id="hero-q" placeholder="Search packages…" autocomplete="off">
     <button onclick="doSearch()">Search</button>
   </div>
 </div>
@@ -70,8 +68,7 @@
   <span>© 2026 Freight</span>
   <span>
     <a href="/health">Status</a> ·
-    <a href="/docs/">Docs</a> ·
-    <a href="/install">Install</a>
+    <a href="https://github.com/freight-app/freight-registry" target="_blank">Source</a>
   </span>
 </footer>
 
@@ -199,8 +196,7 @@ async function loadFeatured() {
     renderKeywordCloud(kwData?.keywords ?? [], kwEl);
     if (data.packages.length === 0) {
       el.innerHTML = `<div class="empty" style="padding-top:16px">
-        No packages published yet. Be the first to
-        <a href="/docs/#publish">publish</a>!
+        No packages have been published yet.
       </div>`;
     } else {
       renderPackageCards(data.packages, el);

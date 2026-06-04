@@ -5,7 +5,6 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 ## Open
 
 - [ ] **A6 · S** **CSP header** — Content-Security-Policy once any HTML pages are served directly
-- [ ] **E1 · S** **Real SMTP delivery** — Email verification tokens and password-reset links are currently logged to stdout via `tracing::warn!` (no SMTP). Add an optional `[smtp]` config block; fall back to stdout logging when absent. Consider a `trait Mailer` abstraction for testability.
 - [ ] **E2 · S** **TOTP recovery codes** — If a user loses their TOTP device there is no recovery path. Generate a set of single-use backup codes at enrolment time; store their SHA-256 hashes in the DB.
 - [ ] **E3 · S** **Org role enforcement** — Members have a `role` column (`"member"` / `"owner"`) but it is not enforced. Gate destructive org operations (delete, remove members, set_package_org) on `"owner"` role.
 - [ ] **E4 · S** **Org-scoped tokens** — Tokens are user-scoped. Add optional `org_id` binding so CI tokens can't publish outside their org.
@@ -22,6 +21,7 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 - [x] Checksum verification on download
 - [x] Email verification
 - [x] Password reset flow
+- [x] Optional SMTP delivery — real email when `[serve.smtp]` / `--smtp-*` / `FREIGHT_SMTP_*` is configured; stdout link logging otherwise
 - [x] TOTP / 2FA
 - [x] CORS & security headers
 - [x] Refresh tokens

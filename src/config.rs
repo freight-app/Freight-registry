@@ -38,10 +38,10 @@
 //! # Supported platform keys: linux, windows, freebsd, macos, openbsd,
 //! #                           netbsd, dragonfly, solaris, android
 //! [serve.verify]
-//! default = "ghcr.io/tinytinyterminator/freight-ci-linux:latest"
-//! linux   = "ghcr.io/tinytinyterminator/freight-ci-linux:latest"
-//! windows = "ghcr.io/tinytinyterminator/freight-ci-windows:latest"
-//! freebsd = "ghcr.io/tinytinyterminator/freight-ci-freebsd:latest"
+//! default = "registry.example.com/freight-ci-linux:latest"
+//! linux   = "registry.example.com/freight-ci-linux:latest"
+//! windows = "registry.example.com/freight-ci-windows:latest"
+//! freebsd = "registry.example.com/freight-ci-freebsd:latest"
 //!
 //! # Email delivery — omit this section to log links to stdout instead
 //! # Password is supplied via FREIGHT_SMTP_PASSWORD env var, not here.

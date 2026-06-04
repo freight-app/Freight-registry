@@ -115,7 +115,7 @@ enum Command {
         /// container builds it, runs its tests, and scans it for malware.
         /// The container must output a JSON result to stdout (see docs).
         /// Omit to publish immediately without verification.
-        /// Example: ghcr.io/tinytinyterminator/freight-ci:latest
+        /// Example: registry.example.com/freight-ci:latest
         #[arg(long, env = "FREIGHT_VERIFY_IMAGE")]
         verify_image: Option<String>,
         /// Per-platform CI images. When set, packages are verified against

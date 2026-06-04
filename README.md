@@ -1,6 +1,6 @@
 # freight-registry
 
-Self-hosted registry server for the [freight](https://github.com/TiniTinyTerminator/freight) package manager. Implements the same HTTP wire protocol as `freight.dev` so any `freight` client can point at it with a single config entry.
+Self-hosted registry server for the [freight](https://github.com/freight-app/Freight) package manager. Implements the same HTTP wire protocol as `freight.dev` so any `freight` client can point at it with a single config entry.
 
 ## Features
 
@@ -44,7 +44,7 @@ The server listens on `0.0.0.0:7878` by default. Point a reverse proxy (nginx, C
 **Prerequisites:** Rust stable toolchain.
 
 ```sh
-git clone https://github.com/yourorg/freight-registry.git
+git clone https://github.com/freight-app/Freight-registry.git
 cd freight-registry
 cargo install --path .
 ```

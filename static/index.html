@@ -22,8 +22,9 @@
     <input type="search" id="nav-q" placeholder="Search packages…" autocomplete="off">
   </div>
   <div class="nav-links">
-    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
-    <a href="https://github.com/TiniTinyTerminator/Freight-registry" target="_blank">GitHub</a>
+    <a href="/docs/">Docs</a>
+    <a href="/install">Install</a>
+    <a href="https://github.com/freight-app/freight-registry" target="_blank">GitHub</a>
     <a id="nav-auth" href="/login">Login</a>
   </div>
   <button class="nav-settings-btn" id="nav-settings" aria-label="Settings" title="Settings">
@@ -69,7 +70,8 @@
   <span>© 2026 Freight</span>
   <span>
     <a href="/health">Status</a> ·
-    <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">Docs</a>
+    <a href="/docs/">Docs</a> ·
+    <a href="/install">Install</a>
   </span>
 </footer>
 
@@ -198,7 +200,7 @@ async function loadFeatured() {
     if (data.packages.length === 0) {
       el.innerHTML = `<div class="empty" style="padding-top:16px">
         No packages published yet. Be the first to
-        <a href="https://github.com/TiniTinyTerminator/Freight" target="_blank">publish</a>!
+        <a href="/docs/#publish">publish</a>!
       </div>`;
     } else {
       renderPackageCards(data.packages, el);

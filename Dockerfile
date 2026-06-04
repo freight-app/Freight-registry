@@ -1,11 +1,9 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM rust:1-slim AS builder
+FROM rust:1-alpine AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev \
- && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache musl-dev pkgconfig openssl-dev openssl-libs-static
 
 # Cache dependencies separately from application code.
 # migrations/ must be present because sqlx::migrate! embeds SQL at compile time.
@@ -26,11 +24,10 @@ RUN touch src/lib.rs src/main.rs src/tui/main.rs \
  && cargo build --release
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM alpine:3
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/* \
- && adduser --disabled-password --gecos '' freight
+RUN apk add --no-cache ca-certificates curl \
+ && adduser -D -g '' freight
 
 COPY --from=builder /build/target/release/freight-registry /usr/local/bin/freight-registry
 

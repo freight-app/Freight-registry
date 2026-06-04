@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Install Freight</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages..." autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="/docs/">Docs</a>
+    <a href="/install">Install</a>
+    <a href="https://github.com/freight-app/freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+  <button class="nav-settings-btn" id="nav-settings" aria-label="Settings" title="Settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+</nav>
+
+<main>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <a href="/docs/">Guide</a>
+      <a class="active" href="/install">Install</a>
+      <a href="#linux">Linux</a>
+      <a href="#macos">macOS</a>
+      <a href="#windows">Windows</a>
+      <a href="#registry">Registry server</a>
+    </aside>
+
+    <article class="docs-content">
+      <div class="docs-tabs">
+        <a href="/docs/">Guide</a>
+        <a class="active" href="/install">Install</a>
+      </div>
+
+      <h1>Install Freight</h1>
+      <p class="docs-lead">Install the CLI first, then point it at the registry used by your project or organization.</p>
+
+      <div class="install-grid">
+        <section class="install-card" id="linux">
+          <h3>Linux</h3>
+          <div class="docs-code"><pre><code>curl https://sh.rustup.rs -sSf | sh
+cargo install --git https://github.com/freight-app/freight freight</code></pre></div>
+          <ul class="check-list">
+            <li>Install a C/C++ compiler such as GCC or Clang.</li>
+            <li>Install CMake, pkg-config, and Ninja when packages need foreign builds.</li>
+          </ul>
+        </section>
+
+        <section class="install-card" id="macos">
+          <h3>macOS</h3>
+          <div class="docs-code"><pre><code>xcode-select --install
+curl https://sh.rustup.rs -sSf | sh
+cargo install --git https://github.com/freight-app/freight freight</code></pre></div>
+          <ul class="check-list">
+            <li>Use Apple Clang from Command Line Tools for native builds.</li>
+            <li>Install CMake and Ninja through Homebrew when needed.</li>
+          </ul>
+        </section>
+
+        <section class="install-card" id="windows">
+          <h3>Windows</h3>
+          <div class="docs-code"><pre><code>winget install Rustlang.Rustup
+winget install Microsoft.VisualStudio.2022.BuildTools
+cargo install --git https://github.com/freight-app/freight freight</code></pre></div>
+          <ul class="check-list">
+            <li>Enable the MSVC C++ toolchain in Visual Studio Build Tools.</li>
+            <li>Use PowerShell, Windows Terminal, or a developer command prompt.</li>
+          </ul>
+        </section>
+
+        <section class="install-card">
+          <h3>From source</h3>
+          <div class="docs-code"><pre><code>git clone https://github.com/freight-app/freight
+cd freight
+cargo install --path crates/freight</code></pre></div>
+          <ul class="check-list">
+            <li>Use this path when testing local changes or unreleased features.</li>
+            <li>Run <code>freight --version</code> after install.</li>
+          </ul>
+        </section>
+      </div>
+
+      <h2 id="registry">Registry server</h2>
+      <p>Run the registry for local development, private package hosting, or organization-wide package distribution.</p>
+      <div class="docs-code"><pre><code>cargo install --git https://github.com/freight-app/freight-registry freight-registry
+freight-registry --data /var/lib/freight-registry serve --base-url https://registry.example.com</code></pre></div>
+
+      <h2>Configure the CLI</h2>
+      <p>Authenticate once per registry. The token is stored by the CLI and is not displayed again in the account settings page.</p>
+      <div class="docs-code"><pre><code>freight login --registry https://registry.example.com
+freight fetch
+freight build</code></pre></div>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span><a href="/health">Status</a> · <a href="/docs/">Docs</a> · <a href="/install">Install</a></span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

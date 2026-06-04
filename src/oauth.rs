@@ -55,6 +55,12 @@ pub struct OAuthProviderConfig {
     /// OAuth2 application client ID.
     pub client_id: String,
     /// OAuth2 application client secret.
+    ///
+    /// Never stored in the config file. At startup the secret is read from the
+    /// env var `FREIGHT_OAUTH_<NAME_UPPER>_CLIENT_SECRET` (e.g.
+    /// `FREIGHT_OAUTH_OKTA_CLIENT_SECRET`). Providers missing a secret are
+    /// skipped with a warning.
+    #[serde(skip)]
     pub client_secret: String,
 
     // ── OIDC auto-discovery ────────────────────────────────────────────────────
@@ -196,12 +202,31 @@ impl OAuthProviderConfig {
         })
     }
 
-    /// Resolve the config: run OIDC discovery (if `issuer` is set), fill in
-    /// field-mapping defaults, and return a ready-to-use [`OAuthProvider`].
+    /// Resolve the config: load the client secret from the environment, run
+    /// OIDC discovery (if `issuer` is set), fill in field-mapping defaults,
+    /// and return a ready-to-use [`OAuthProvider`].
+    ///
+    /// The secret is read from `FREIGHT_OAUTH_<NAME_UPPER>_CLIENT_SECRET`
+    /// (e.g. `FREIGHT_OAUTH_OKTA_CLIENT_SECRET`). Returns an error when the
+    /// env var is absent or empty so the caller can skip the provider.
     ///
     /// Call this once at startup; the resulting `OAuthProvider` is stored in
     /// `AppState` and reused for every request.
-    pub async fn resolve(self) -> Result<OAuthProvider> {
+    pub async fn resolve(mut self) -> Result<OAuthProvider> {
+        // Load secret from env if not already set (preset constructors set it directly).
+        if self.client_secret.is_empty() {
+            let env_key = format!(
+                "FREIGHT_OAUTH_{}_CLIENT_SECRET",
+                self.name.to_ascii_uppercase().replace('-', "_")
+            );
+            self.client_secret = std::env::var(&env_key).unwrap_or_default();
+            if self.client_secret.is_empty() {
+                anyhow::bail!(
+                    "OAuth provider '{}': set {} env var to supply the client secret",
+                    self.name, env_key
+                );
+            }
+        }
         let is_oidc = self.issuer.is_some();
 
         let (auth_ep, token_ep, userinfo_ep) = if let Some(ref issuer) = self.issuer {

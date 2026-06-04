@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freight Ecosystem Guide</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="/">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+      <line x1="12" y1="22.08" x2="12" y2="12"/>
+    </svg>
+    Freight
+  </a>
+  <div class="nav-search">
+    <input type="search" id="nav-q" placeholder="Search packages..." autocomplete="off">
+  </div>
+  <div class="nav-links">
+    <a href="/docs/">Docs</a>
+    <a href="/install">Install</a>
+    <a href="https://github.com/freight-app/freight-registry" target="_blank">GitHub</a>
+    <a id="nav-auth" href="/login">Login</a>
+  </div>
+  <button class="nav-settings-btn" id="nav-settings" aria-label="Settings" title="Settings">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+  <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+</nav>
+
+<main>
+  <div class="docs-shell">
+    <aside class="docs-sidebar">
+      <a class="active" href="/docs/">Guide</a>
+      <a href="/install">Install</a>
+      <a href="#project">Project setup</a>
+      <a href="#dependencies">Dependencies</a>
+      <a href="#publish">Publish</a>
+      <a href="#documentation">Documentation</a>
+    </aside>
+
+    <article class="docs-content">
+      <div class="docs-tabs">
+        <a class="active" href="/docs/">Guide</a>
+        <a href="/install">Install</a>
+      </div>
+
+      <h1>Freight ecosystem guide</h1>
+      <p class="docs-lead">Freight is the build tool, package format, registry, documentation browser, and editor integration surface for native projects.</p>
+
+      <h2 id="project">Project setup</h2>
+      <p>A Freight project is described by <code>freight.toml</code>. Keep source layout conventional and let Freight generate the build metadata used by compilers, IDEs, and package consumers.</p>
+      <div class="docs-code"><pre><code>freight init hello
+cd hello
+freight build
+freight run</code></pre></div>
+
+      <h2 id="dependencies">Dependencies</h2>
+      <p>Dependencies can come from the registry, local paths, Git repositories, or URL archives. Registry dependencies are cached under <code>.pkgs/</code>; compiled artifacts stay under <code>target/</code>.</p>
+      <div class="docs-code"><pre><code>[dependencies]
+fmt = "10"
+
+[dependencies.local-lib]
+path = "../local-lib"
+
+[os.windows.dependencies]
+winapi = "0.3"</code></pre></div>
+
+      <h2 id="publish">Publish and registry workflow</h2>
+      <p>The registry stores package metadata, sources, uploaded README content, generated documentation indexes, and prebuilts. Use channels for release lanes and ownership for shared package maintenance.</p>
+      <div class="docs-code"><pre><code>freight login --registry https://registry.example.com
+freight publish --registry https://registry.example.com
+freight fetch
+freight build --release</code></pre></div>
+
+      <h2 id="documentation">Documentation</h2>
+      <p><code>freight doc</code> extracts source comments into a structured symbol index. Published docs appear in the package page through the source documentation viewer, while this guide covers the ecosystem workflow.</p>
+      <div class="docs-code"><pre><code>freight doc
+freight doc --json
+freight publish --registry https://registry.example.com</code></pre></div>
+
+      <h2>Editor support</h2>
+      <p>The editor extensions start <code>freight lsp</code> for <code>freight.toml</code> diagnostics, completion, hover, and source-language passthroughs. VS Code and Neovim wrappers live with the workspace; JetBrains support is planned.</p>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <span>© 2026 Freight</span>
+  <span><a href="/health">Status</a> · <a href="/docs/">Docs</a> · <a href="/install">Install</a></span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

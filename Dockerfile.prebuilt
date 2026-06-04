@@ -1,0 +1,24 @@
+# Fast local-test image — wraps the host-built binary instead of compiling inside Docker.
+# Build from the workspace root:
+#   cargo build -p freight-registry --release
+#   docker build -f crates/freight-registry/Dockerfile.prebuilt \
+#                -t freight-registry ./target/release
+FROM archlinux:base
+
+RUN pacman -Sy --noconfirm ca-certificates curl \
+ && useradd -m freight \
+ && pacman -Scc --noconfirm
+
+COPY freight-registry /usr/local/bin/freight-registry
+
+RUN mkdir -p /data && chown freight:freight /data
+USER freight
+WORKDIR /data
+VOLUME ["/data"]
+EXPOSE 7878
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -fs http://localhost:7878/health || exit 1
+
+ENTRYPOINT ["freight-registry"]
+CMD ["--data", "/data", "serve"]

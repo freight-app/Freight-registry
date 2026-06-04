@@ -44,37 +44,35 @@
 //! freebsd = "ghcr.io/tinytinyterminator/freight-ci-freebsd:latest"
 //!
 //! # Email delivery — omit this section to log links to stdout instead
+//! # Password is supplied via FREIGHT_SMTP_PASSWORD env var, not here.
 //! [serve.smtp]
 //! host     = "smtp.example.com"
 //! port     = 587                          # default: 587 (STARTTLS), 465 (TLS), 25 (none)
 //! username = "noreply@example.com"
-//! password = "secret"
 //! from     = "Freight Registry <noreply@example.com>"
 //! tls      = "starttls"                   # "starttls" (default), "tls", or "none"
 //!
+//! # S3 credentials are supplied via FREIGHT_S3_KEY_ID / FREIGHT_S3_SECRET, not here.
 //! [serve.s3]
 //! bucket   = "freight-packages"
 //! endpoint = "http://minio:9000"
-//! key_id   = "AKIAIOSFODNN7EXAMPLE"
-//! secret   = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 //! region   = "us-east-1"
 //!
 //! # OAuth / OIDC providers — each becomes a /auth/:name login route.
 //! # Repeat the [[serve.oauth]] block for multiple providers.
+//! # Client secrets are supplied via FREIGHT_OAUTH_<NAME_UPPER>_CLIENT_SECRET, not here.
 //! #
 //! # OIDC auto-discovery (Okta, Azure AD, Keycloak, self-hosted GitLab, …):
 //! [[serve.oauth]]
-//! name          = "okta"
-//! display_name  = "Okta SSO"
-//! client_id     = "0oa…"
-//! client_secret = "…"
-//! issuer        = "https://company.okta.com"
+//! name         = "okta"
+//! display_name = "Okta SSO"
+//! client_id    = "0oa…"
+//! issuer       = "https://company.okta.com"
 //!
 //! # Manual endpoints (non-OIDC, e.g. Gitea):
 //! [[serve.oauth]]
 //! name                   = "gitea"
 //! client_id              = "abc"
-//! client_secret          = "def"
 //! authorization_endpoint = "https://git.internal/login/oauth/authorize"
 //! token_endpoint         = "https://git.internal/login/oauth/access_token"
 //! userinfo_endpoint      = "https://git.internal/api/v1/user"
@@ -82,15 +80,27 @@
 //! username_field         = "login"
 //! ```
 //!
-//! # OAuth env-var shortcuts (no config file needed)
+//! # Secrets — never put these in the config file
 //!
-//! For GitHub, GitLab, and Google you can skip the config file entirely:
+//! Supply all secrets via environment variables or `--flag` at launch:
 //!
 //! ```sh
-//! export GITHUB_CLIENT_ID=…     GITHUB_CLIENT_SECRET=…   # enables /auth/github
-//! export GITLAB_CLIENT_ID=…     GITLAB_CLIENT_SECRET=…   # enables /auth/gitlab
-//! export GITLAB_ISSUER=https://git.internal               # optional: self-hosted GitLab
-//! export GOOGLE_CLIENT_ID=…     GOOGLE_CLIENT_SECRET=…   # enables /auth/google
+//! # SMTP password
+//! export FREIGHT_SMTP_PASSWORD=secret
+//!
+//! # S3 credentials
+//! export FREIGHT_S3_KEY_ID=AKIA…
+//! export FREIGHT_S3_SECRET=wJalr…
+//!
+//! # OAuth/OIDC client secrets — one var per provider (name uppercased)
+//! export FREIGHT_OAUTH_OKTA_CLIENT_SECRET=…
+//! export FREIGHT_OAUTH_GITEA_CLIENT_SECRET=…
+//!
+//! # Shortcuts for the built-in GitHub / GitLab / Google presets:
+//! export GITHUB_CLIENT_ID=…     GITHUB_CLIENT_SECRET=…
+//! export GITLAB_CLIENT_ID=…     GITLAB_CLIENT_SECRET=…
+//! export GITLAB_ISSUER=https://git.internal   # optional: self-hosted
+//! export GOOGLE_CLIENT_ID=…     GOOGLE_CLIENT_SECRET=…
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -186,25 +196,29 @@ pub struct VerifyConfig {
 }
 
 /// SMTP settings under `[serve.smtp]` in the config file.
+///
+/// The SMTP password is never stored here — supply it via
+/// `FREIGHT_SMTP_PASSWORD` env var or `--smtp-password` at launch.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SmtpFileConfig {
     pub host:     Option<String>,
     pub port:     Option<u16>,
     pub username: Option<String>,
-    pub password: Option<String>,
     pub from:     Option<String>,
     /// `"starttls"` (default), `"tls"`, or `"none"`
     pub tls:      Option<String>,
 }
 
+/// S3 storage settings under `[serve.s3]` in the config file.
+///
+/// Credentials (`key_id`, `secret`) are never stored here — supply them via
+/// `FREIGHT_S3_KEY_ID` / `FREIGHT_S3_SECRET` env vars or CLI flags at launch.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct S3Config {
     pub bucket:   Option<String>,
     pub endpoint: Option<String>,
-    pub key_id:   Option<String>,
-    pub secret:   Option<String>,
     pub region:   Option<String>,
 }
 
@@ -330,7 +344,6 @@ fn apply(cfg: Config) {
         if let Some(v) = smtp.host     { set_if_absent("FREIGHT_SMTP_HOST",     &v); }
         if let Some(v) = smtp.port     { set_if_absent("FREIGHT_SMTP_PORT",     &v.to_string()); }
         if let Some(v) = smtp.username { set_if_absent("FREIGHT_SMTP_USERNAME", &v); }
-        if let Some(v) = smtp.password { set_if_absent("FREIGHT_SMTP_PASSWORD", &v); }
         if let Some(v) = smtp.from     { set_if_absent("FREIGHT_SMTP_FROM",     &v); }
         if let Some(v) = smtp.tls      { set_if_absent("FREIGHT_SMTP_TLS",      &v); }
     }
@@ -339,7 +352,5 @@ fn apply(cfg: Config) {
 
     if let Some(v) = s3.bucket   { set_if_absent("FREIGHT_S3_BUCKET",   &v); }
     if let Some(v) = s3.endpoint { set_if_absent("FREIGHT_S3_ENDPOINT", &v); }
-    if let Some(v) = s3.key_id   { set_if_absent("FREIGHT_S3_KEY_ID",   &v); }
-    if let Some(v) = s3.secret   { set_if_absent("FREIGHT_S3_SECRET",   &v); }
     if let Some(v) = s3.region   { set_if_absent("FREIGHT_S3_REGION",   &v); }
 }

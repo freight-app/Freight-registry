@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, StatusCode},
     response::IntoResponse,
     Json,
@@ -11,7 +11,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{ApiError, ApiResult};
-use crate::{auth::AuthToken, db::DEFAULT_CHANNEL, AppState};
+use crate::{auth::PublishToken, db::DEFAULT_CHANNEL, AppState};
+
+#[derive(serde::Deserialize)]
+pub struct ChannelParam {
+    #[serde(default)]
+    channel: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 enum DocLanguage {
@@ -196,9 +202,10 @@ struct DocItem {
 /// Body: raw msgpack bytes (output of `docify dump`).
 /// Requires the caller to be an owner of the package.
 pub async fn put_docs(
-    auth: AuthToken,
+    auth: PublishToken,
     State(state): State<Arc<AppState>>,
     Path((name, version)): Path<(String, String)>,
+    Query(params): Query<ChannelParam>,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
     if body.is_empty() {
@@ -209,9 +216,11 @@ pub async fn put_docs(
     rmp_serde::from_slice::<Vec<DocItem>>(&body)
         .map_err(|_| ApiError::bad_request("invalid msgpack — expected docify dump output"))?;
 
+    let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
+
     let (pkg, _versions) = state
         .db
-        .get_package(&name, DEFAULT_CHANNEL)
+        .get_package(&name, channel)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("package `{name}` not found")))?;
 

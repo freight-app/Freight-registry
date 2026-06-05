@@ -56,6 +56,10 @@ pub async fn download(
         return Err(ApiError::gone(format!("`{name}@{version}` has been yanked")));
     }
 
+    if !ver.is_published() {
+        return Err(ApiError::not_found(format!("`{name}@{version}` not found")));
+    }
+
     // Metadata-only package: redirect to the upstream source archive.
     if let Some(ref upstream_url) = ver.upstream_url {
         state.db.increment_downloads(&name, &version, channel);

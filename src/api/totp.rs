@@ -57,9 +57,13 @@ pub async fn confirm(
     }
 
     state.db.enable_totp(auth.user.id, true).await?;
+    let recovery_codes = state.db.generate_recovery_codes(auth.user.id).await?;
     tracing::info!(user = %user.username, "TOTP enabled");
 
-    Ok(Json(json!({ "ok": true })))
+    Ok(Json(json!({
+        "ok": true,
+        "recovery_codes": recovery_codes,
+    })))
 }
 
 pub async fn disable(

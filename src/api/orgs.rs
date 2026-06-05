@@ -172,10 +172,12 @@ pub async fn set_package_org(
         }
     }
 
-    // Must be a member of the target org (if setting one).
+    // Must be an *owner* of the target org (if setting one).
     if let Some(org) = org_name {
-        if auth.user.is_admin == 0 && !state.db.is_org_member(org, auth.user.id).await? {
-            return Err(ApiError::forbidden("you are not a member of that org"));
+        let is_org_owner = auth.user.is_admin != 0
+            || state.db.is_org_owner(org, auth.user.id).await?;
+        if !is_org_owner {
+            return Err(ApiError::forbidden("only org owners can assign packages to this org"));
         }
     }
 

@@ -272,6 +272,29 @@ impl Storage {
         }
     }
 
+    /// Remove all blobs (source tarball, README, docs, prebuilts) for a single version.
+    /// Silently succeeds if no files are present.
+    pub async fn delete_version(&self, name: &str, version: &str) -> Result<()> {
+        match &self.backend {
+            Backend::Local(root) => {
+                let path = root.join(name).join(version);
+                if path.exists() {
+                    tokio::fs::remove_dir_all(path).await?;
+                }
+            }
+            Backend::S3(store) => {
+                let prefix = ObjPath::from(format!("{name}/{version}"));
+                let mut stream = store.list(Some(&prefix));
+                while let Some(result) = stream.next().await {
+                    if let Ok(meta) = result {
+                        let _ = store.delete(&meta.location).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Remove all stored tarballs for a package. Silently succeeds if none exist.
     pub async fn delete_package_dir(&self, name: &str) -> Result<()> {
         match &self.backend {

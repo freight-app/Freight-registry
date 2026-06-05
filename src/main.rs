@@ -174,6 +174,19 @@ enum Command {
         #[command(subcommand)]
         command: TokenCmd,
     },
+    /// Delete stored blobs (source tarballs, prebuilts, docs) for yanked versions.
+    ///
+    /// The DB rows are kept so yank history is preserved; only the on-disk / S3
+    /// files are removed.  Dry-run by default — pass --execute to actually delete.
+    Gc {
+        /// Storage directory (only used for local-filesystem backend;
+        /// ignored when --s3-bucket is configured).
+        #[arg(long, env = "FREIGHT_DATA_DIR", default_value = "/var/lib/freight-registry")]
+        data: PathBuf,
+        /// Actually delete files. Without this flag only a report is printed.
+        #[arg(long)]
+        execute: bool,
+    },
     /// Bulk-import metadata-only package stubs from a directory of TOML files.
     ///
     /// Each .toml file must have a `[package]` section with at least `name` and
@@ -578,6 +591,9 @@ async fn main() -> Result<()> {
         Command::Import { dir, user, channel, batch: batch_size } => {
             cmd_import(&db, &dir, &user, &channel, batch_size).await?;
         }
+        Command::Gc { data, execute } => {
+            cmd_gc(&db, &data, execute).await?;
+        }
     }
 
     Ok(())
@@ -868,4 +884,38 @@ fn batch_owner_insert_sql(n: usize, pg: bool) -> String {
     }
     s.push_str(" ON CONFLICT DO NOTHING");
     s
+}
+
+// ── GC ────────────────────────────────────────────────────────────────────────
+
+async fn cmd_gc(db: &Db, data: &PathBuf, execute: bool) -> Result<()> {
+    let storage = Storage::new(data.join("tarballs"));
+    let yanked = db.list_yanked_versions().await?;
+
+    if yanked.is_empty() {
+        println!("No yanked versions found — nothing to collect.");
+        return Ok(());
+    }
+
+    let mut freed: u64 = 0;
+    for (name, version, channel) in &yanked {
+        println!(
+            "{} {name}@{version} ({channel})",
+            if execute { "deleting" } else { "would delete" }
+        );
+        if execute {
+            storage.delete_version(name, version).await?;
+            freed += 1;
+        }
+    }
+
+    if execute {
+        println!("\nDeleted blobs for {freed} yanked version(s).");
+    } else {
+        println!(
+            "\n{} yanked version(s) found. Re-run with --execute to delete their blobs.",
+            yanked.len()
+        );
+    }
+    Ok(())
 }

@@ -78,6 +78,7 @@ pub async fn login(
     }
 
     // TOTP check — required when the account has 2FA enabled.
+    // The client may supply either a live TOTP code or a single-use recovery code.
     if user.totp_enabled != 0 {
         let code = req
             .totp_code
@@ -87,7 +88,13 @@ pub async fn login(
             .totp_secret
             .as_deref()
             .ok_or_else(|| ApiError::internal("TOTP secret missing"))?;
-        if !crate::totp::verify(secret, &user.username, code) {
+        let valid_totp = crate::totp::verify(secret, &user.username, code);
+        let valid_recovery = if valid_totp {
+            false
+        } else {
+            state.db.consume_recovery_code(user.id, code).await?
+        };
+        if !valid_totp && !valid_recovery {
             return Err(ApiError::bad_request("invalid TOTP code"));
         }
     }

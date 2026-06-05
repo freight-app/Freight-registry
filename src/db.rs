@@ -498,6 +498,64 @@ impl Db {
         Ok(())
     }
 
+    // ── TOTP recovery codes ────────────────────────────────────────────────────
+
+    /// Generate 8 single-use recovery codes for `user_id`, store their SHA-256
+    /// hashes, and return the plaintext codes (shown once to the user).
+    /// Any previous unused codes for this user are deleted first.
+    pub async fn generate_recovery_codes(&self, user_id: i64) -> Result<Vec<String>> {
+        use rand::RngCore;
+        use sha2::{Digest, Sha256};
+
+        sqlx::query(&self.q_sql("DELETE FROM totp_recovery_codes WHERE user_id = ?"))
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        let mut codes = Vec::with_capacity(8);
+        for _ in 0..8 {
+            let mut raw = [0u8; 10];
+            rand::thread_rng().fill_bytes(&mut raw);
+            // Format as XXXXX-XXXXX (base32-like hex chunks, easy to type).
+            let hex = hex::encode(raw);
+            let code = format!("{}-{}", &hex[..5], &hex[5..10]);
+            let hash = hex::encode(Sha256::digest(code.as_bytes()));
+            sqlx::query(&self.q_sql(
+                "INSERT INTO totp_recovery_codes (user_id, code_hash, used) VALUES (?, ?, 0)",
+            ))
+            .bind(user_id)
+            .bind(&hash)
+            .execute(&self.pool)
+            .await?;
+            codes.push(code);
+        }
+        Ok(codes)
+    }
+
+    /// Try to consume a recovery code for `user_id`. Returns `true` if the
+    /// code was valid and unused (it is marked used atomically).
+    pub async fn consume_recovery_code(&self, user_id: i64, code: &str) -> Result<bool> {
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(Sha256::digest(code.as_bytes()));
+        let row: Option<i64> = sqlx::query_scalar(
+            &self.q_sql("SELECT id FROM totp_recovery_codes WHERE user_id = ? AND code_hash = ? AND used = 0"),
+        )
+        .bind(user_id)
+        .bind(&hash)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(id) = row {
+            sqlx::query(&self.q_sql("UPDATE totp_recovery_codes SET used = 1 WHERE id = ?"))
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     // ── Email tokens ───────────────────────────────────────────────────────────
 
     /// Create an email verification or password-reset token for `user_id`.
@@ -1122,6 +1180,27 @@ impl Db {
         .await?
         .rows_affected();
         Ok(n > 0)
+    }
+
+    /// Return all yanked versions as (package_name, version, channel) triples.
+    /// Used by the `gc` subcommand to find blobs that can be deleted.
+    pub async fn list_yanked_versions(&self) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query(
+            &self.q_sql("SELECT p.name, v.version, p.channel
+               FROM versions v
+               JOIN packages p ON p.id = v.package_id
+               WHERE v.yanked = 1"),
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let name:    String = row.try_get("name")?;
+            let version: String = row.try_get("version")?;
+            let channel: String = row.try_get("channel")?;
+            out.push((name, version, channel));
+        }
+        Ok(out)
     }
 
     // ── Ownership ──────────────────────────────────────────────────────────────

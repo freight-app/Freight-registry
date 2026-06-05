@@ -40,6 +40,10 @@ pub struct CreateTokenReq {
     /// Token scope: `"read"`, `"publish"` (default), or `"admin"`.
     #[serde(default = "default_scope")]
     scope: String,
+    /// Restrict this token to publishing within a specific org.
+    /// The authenticated user must be an owner of the named org.
+    #[serde(default)]
+    org: Option<String>,
 }
 
 pub async fn create(
@@ -48,12 +52,27 @@ pub async fn create(
     Json(req): Json<CreateTokenReq>,
 ) -> ApiResult<Json<Value>> {
     validate::token_scope(&req.scope)?;
+
+    // Resolve org name → id, verifying the caller is an org owner.
+    let org_id = if let Some(ref org_name) = req.org {
+        let org = state.db.get_org(org_name).await?
+            .ok_or_else(|| ApiError::not_found(format!("org `{org_name}` not found")))?;
+        let is_owner = auth.user.is_admin != 0
+            || state.db.is_org_owner(org_name, auth.user.id).await?;
+        if !is_owner {
+            return Err(ApiError::forbidden("only org owners can create org-scoped tokens"));
+        }
+        Some(org.id)
+    } else {
+        None
+    };
+
     let token = state
         .db
-        .create_token(auth.user.id, &req.name, req.expires_days, "api", &req.scope)
+        .create_token(auth.user.id, &req.name, req.expires_days, "api", &req.scope, org_id)
         .await
         .map_err(|_| ApiError::conflict(format!("token `{}` already exists", req.name)))?;
-    Ok(Json(json!({ "token": token, "name": req.name, "scope": req.scope })))
+    Ok(Json(json!({ "token": token, "name": req.name, "scope": req.scope, "org": req.org })))
 }
 
 pub async fn revoke(

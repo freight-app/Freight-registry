@@ -158,7 +158,7 @@ async fn email_token_invalid_hex_rejected() {
 async fn token_create_and_validate() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    let raw = db.create_token(uid, "cli", None, "api", "publish").await.unwrap();
+    let raw = db.create_token(uid, "cli", None, "api", "publish", None).await.unwrap();
     let (tok, user) = db.validate_token(&raw).await.unwrap().unwrap();
     assert_eq!(tok.kind, "api");
     assert_eq!(user.username, "alice");
@@ -175,7 +175,7 @@ async fn token_expired_returns_none() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
     // expires_days = 0 → already expired (0 days in the past)
-    let raw = db.create_token(uid, "expired", Some(0), "api", "publish").await.unwrap();
+    let raw = db.create_token(uid, "expired", Some(0), "api", "publish", None).await.unwrap();
     // Token with expires_at = now + 0 * 86400 = now, which passes `exp < now` check
     // since `exp < now` — it's at least a few ms old, but might be equal.
     // Use -1 days instead: negative would have been in the past.
@@ -189,7 +189,7 @@ async fn token_expired_returns_none() {
 async fn token_revoke() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    let raw = db.create_token(uid, "mytoken", None, "api", "publish").await.unwrap();
+    let raw = db.create_token(uid, "mytoken", None, "api", "publish", None).await.unwrap();
     assert!(db.validate_token(&raw).await.unwrap().is_some());
     assert!(db.revoke_token(uid, "mytoken").await.unwrap());
     assert!(db.validate_token(&raw).await.unwrap().is_none());
@@ -206,7 +206,7 @@ async fn token_revoke_nonexistent_returns_false() {
 async fn token_kind_stored_correctly() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    let raw = db.create_token(uid, "r", None, "refresh", "publish").await.unwrap();
+    let raw = db.create_token(uid, "r", None, "refresh", "publish", None).await.unwrap();
     let (tok, _) = db.validate_token(&raw).await.unwrap().unwrap();
     assert_eq!(tok.kind, "refresh");
 }
@@ -215,8 +215,8 @@ async fn token_kind_stored_correctly() {
 async fn token_list() {
     let db = Db::open_memory().await.unwrap();
     let uid = make_user(&db, "alice").await;
-    db.create_token(uid, "t1", None, "api", "publish").await.unwrap();
-    db.create_token(uid, "t2", None, "access", "publish").await.unwrap();
+    db.create_token(uid, "t1", None, "api", "publish", None).await.unwrap();
+    db.create_token(uid, "t2", None, "access", "publish", None).await.unwrap();
     let all = db.list_tokens(None).await.unwrap();
     assert_eq!(all.len(), 2);
     let filtered = db.list_tokens(Some(uid)).await.unwrap();

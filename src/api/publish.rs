@@ -87,6 +87,24 @@ pub async fn publish(
         }
     }
 
+    // Org-scoped token enforcement: if the token is bound to an org, the package
+    // must belong to that org (or be a new package that will be auto-assigned).
+    if let Some(token_org_id) = auth.token.org_id {
+        let pkg_org_id = state.db.get_package_org_id(&meta.name, channel).await?;
+        match pkg_org_id {
+            Some(pkg_org) if pkg_org != token_org_id => {
+                return Err(ApiError::forbidden(
+                    "this token is bound to a different org — it cannot publish to this package",
+                ));
+            }
+            None => {
+                // New package: pre-assign it to the token's org.
+                state.db.set_package_org(&meta.name, channel, None).await.ok();
+            }
+            _ => {}
+        }
+    }
+
     if let Some((_, versions)) = state.db.get_package(&meta.name, channel).await? {
         if versions.iter().any(|v| v.version == meta.vers) {
             return Err(ApiError::conflict(format!(
@@ -840,7 +858,7 @@ mod scan_tests {
 
         let db = Db::open_memory().await.unwrap();
         let uid = db.create_user("alice", None, "pw").await.unwrap();
-        let tok = db.create_token(uid, "dev", None, "publish", "publish").await.unwrap();
+        let tok = db.create_token(uid, "dev", None, "publish", "publish", None).await.unwrap();
 
         let state = Arc::new(AppState {
             db,

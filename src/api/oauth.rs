@@ -199,8 +199,8 @@ pub async fn oauth_callback(
     let refresh_name = format!("{provider_name}-refresh-{ts}");
 
     let (token, refresh_token) = match tokio::try_join!(
-        state.db.create_token(user.id, &access_name,  Some(90), "access",  "publish"),
-        state.db.create_token(user.id, &refresh_name, Some(30), "refresh", "publish"),
+        state.db.create_token(user.id, &access_name,  Some(90), "access",  "publish", None),
+        state.db.create_token(user.id, &refresh_name, Some(30), "refresh", "publish", None),
     ) {
         Ok(pair) => pair,
         Err(e)   => {

@@ -70,6 +70,8 @@ pub struct TokenRow {
     pub scope:      String,
     pub expires_at: Option<i64>,
     pub last_used:  Option<i64>,
+    /// When set, this token may only publish to packages owned by this org.
+    pub org_id:     Option<i64>,
 }
 
 #[derive(FromRow)]
@@ -82,6 +84,7 @@ pub struct TokenWithUser {
     pub expires_at: Option<i64>,
     pub last_used:  Option<i64>,
     pub username:   String,
+    pub org_id:     Option<i64>,
 }
 
 /// Compare two version strings heuristically: split on `.`, `-`, `_`;
@@ -621,6 +624,7 @@ impl Db {
         expires_days: Option<i64>,
         kind: &str,
         scope: &str,
+        org_id: Option<i64>,
     ) -> Result<String> {
         use rand::RngCore;
         let mut bytes = [0u8; 32];
@@ -628,14 +632,15 @@ impl Db {
         let token = hex::encode(bytes);
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let expires_at = expires_days.map(|d| unix_now() + d * 86_400);
-        sqlx::query(&self.q_sql("INSERT INTO tokens (user_id, name, kind, scope, token_hash, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?)"))
+        sqlx::query(&self.q_sql("INSERT INTO tokens (user_id, name, kind, scope, token_hash, expires_at, org_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"))
         .bind(user_id)
         .bind(name)
         .bind(kind)
         .bind(scope)
         .bind(&hash)
         .bind(expires_at)
+        .bind(org_id)
         .execute(&self.pool)
         .await?;
         Ok(token)
@@ -647,7 +652,7 @@ impl Db {
         let hash = hex::encode(Sha256::digest(token.as_bytes()));
         let now = unix_now();
 
-        let tok: Option<TokenRow> = sqlx::query_as(&self.q_sql("SELECT id, user_id, name, kind, scope, expires_at, last_used
+        let tok: Option<TokenRow> = sqlx::query_as(&self.q_sql("SELECT id, user_id, name, kind, scope, expires_at, last_used, org_id
              FROM tokens WHERE token_hash = ?"))
         .bind(&hash)
         .fetch_optional(&self.pool)
@@ -683,7 +688,7 @@ impl Db {
 
     pub async fn list_tokens(&self, user_id: Option<i64>) -> Result<Vec<TokenWithUser>> {
         if let Some(uid) = user_id {
-            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
+            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username, t.org_id
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  WHERE t.user_id = ? ORDER BY t.created_at"))
             .bind(uid)
@@ -691,7 +696,7 @@ impl Db {
             .await
             .map_err(Into::into)
         } else {
-            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username
+            sqlx::query_as(&self.q_sql("SELECT t.id, t.user_id, t.name, t.kind, t.scope, t.expires_at, t.last_used, u.username, t.org_id
                  FROM tokens t JOIN users u ON u.id = t.user_id
                  ORDER BY u.username, t.created_at"))
             .fetch_all(&self.pool)
@@ -1432,6 +1437,18 @@ impl Db {
     }
 
     // ── Graph ──────────────────────────────────────────────────────────────────
+
+    /// Return the org_id for a package, if it is assigned to one.
+    pub async fn get_package_org_id(&self, name: &str, channel: &str) -> Result<Option<i64>> {
+        let row: Option<i64> = sqlx::query_scalar(
+            &self.q_sql("SELECT org_id FROM packages WHERE lower(name) = lower(?) AND lower(channel) = lower(?)"),
+        )
+        .bind(name)
+        .bind(channel)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
 
     /// Return every non-yanked package in `channel` alongside its latest
     /// version's dependency JSON blob — one row per package.

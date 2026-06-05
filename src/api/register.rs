@@ -58,7 +58,7 @@ pub async fn register(
     let token_name = req.token_name.unwrap_or_else(|| "init".to_string());
     let token = state
         .db
-        .create_token(user_id, &token_name, Some(90), "api", "publish")
+        .create_token(user_id, &token_name, Some(90), "api", "publish", None)
         .await?;
 
     // Send a verification link when an email was provided.

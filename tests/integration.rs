@@ -501,3 +501,132 @@ async fn only_org_owner_can_create_org_scoped_token() {
     ).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+// ── Reports + admin overview ──────────────────────────────────────────────────
+
+fn patch_json_auth(uri: &str, token: &str, body: impl serde::Serialize) -> Request<Body> {
+    Request::builder()
+        .method("PATCH").uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .extension(ci())
+        .body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap()
+}
+
+/// Register a user and promote them to admin; returns their token.
+async fn register_admin(state: &Arc<AppState>, username: &str) -> String {
+    let token = register(state, username, "pw-admin-123").await;
+    state.db.set_admin(username, true).await.unwrap();
+    token
+}
+
+#[tokio::test]
+async fn report_flow_file_list_resolve() {
+    let state = make_state().await;
+    let owner = register(&state, "rep_owner", "pw-123456").await;
+    let reporter = register(&state, "rep_user", "pw-123456").await;
+    let admin = register_admin(&state, "rep_admin").await;
+    assert_eq!(publish(&state, &owner, "badpkg", "1.0.0").await, StatusCode::OK);
+
+    // A regular user files a report.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/packages/badpkg/report", &reporter,
+            json!({ "reason": "malware", "details": "ships a miner", "version": "1.0.0" })),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Admin sees it in the open list.
+    let (st, body) = send(
+        api::router(state.clone(), 1 << 20),
+        get_auth("/api/v1/admin/reports?status=open", &admin),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+    let reports = body["reports"].as_array().unwrap();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0]["package"], "badpkg");
+    assert_eq!(reports[0]["reason"], "malware");
+    let id = reports[0]["id"].as_i64().unwrap();
+
+    // A non-admin cannot list reports.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        get_auth("/api/v1/admin/reports", &reporter),
+    ).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // Admin resolves it.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        patch_json_auth(&format!("/api/v1/admin/reports/{id}"), &admin,
+            json!({ "status": "resolved", "note": "yanked the version" })),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Open list is now empty.
+    let (_, body) = send(
+        api::router(state.clone(), 1 << 20),
+        get_auth("/api/v1/admin/reports?status=open", &admin),
+    ).await;
+    assert_eq!(body["reports"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn report_validation() {
+    let state = make_state().await;
+    let owner = register(&state, "v_owner", "pw-123456").await;
+    let user = register(&state, "v_user", "pw-123456").await;
+    assert_eq!(publish(&state, &owner, "vpkg", "1.0.0").await, StatusCode::OK);
+
+    // Unknown reason → 400.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/packages/vpkg/report", &user, json!({ "reason": "because" })),
+    ).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // Report against a nonexistent package → 404.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/packages/ghost/report", &user, json!({ "reason": "spam" })),
+    ).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    // Anonymous report → 401.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        Request::builder().method("POST").uri("/api/v1/packages/vpkg/report")
+            .header("Content-Type", "application/json").extension(ci())
+            .body(Body::from(serde_json::to_vec(&json!({ "reason": "spam" })).unwrap())).unwrap(),
+    ).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_overview_counts() {
+    let state = make_state().await;
+    let owner = register(&state, "ov_owner", "pw-123456").await;
+    let admin = register_admin(&state, "ov_admin").await;
+    assert_eq!(publish(&state, &owner, "ovpkg", "1.0.0").await, StatusCode::OK);
+    let (_, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/packages/ovpkg/report", &owner, json!({ "reason": "other" })),
+    ).await;
+
+    let (st, body) = send(
+        api::router(state.clone(), 1 << 20),
+        get_auth("/api/v1/admin/overview", &admin),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["packages"], 1);
+    assert_eq!(body["open_reports"], 1);
+    assert!(body["users"].as_i64().unwrap() >= 2);
+    assert!(body["admins"].as_i64().unwrap() >= 1);
+
+    // Non-admin is forbidden.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        get_auth("/api/v1/admin/overview", &owner),
+    ).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}

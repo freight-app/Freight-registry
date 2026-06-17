@@ -63,3 +63,20 @@ pub async fn remove_user(
         Err(ApiError::not_found(format!("user `{username}` not found")))
     }
 }
+
+/// GET /api/v1/admin/overview — registry-wide counts for the admin dashboard.
+pub async fn overview(
+    _auth: AdminToken,
+    State(state): State<Arc<AppState>>,
+) -> ApiResult<Json<Value>> {
+    let o = state.db.admin_overview().await?;
+    Ok(Json(json!({
+        "packages":        o.stats.packages,
+        "versions":        o.stats.versions,
+        "users":           o.stats.users,
+        "admins":          o.admins,
+        "active_tokens":   o.stats.tokens_active,
+        "downloads_total": o.stats.downloads_total,
+        "open_reports":    o.open_reports,
+    })))
+}

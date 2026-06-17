@@ -191,6 +191,29 @@ pub struct DbStats {
     pub downloads_total: i64,
 }
 
+/// An abuse/problem report filed against a package.
+#[derive(Debug, Clone, FromRow)]
+pub struct ReportRow {
+    pub id:          i64,
+    pub package:     String,
+    pub version:     Option<String>,
+    pub reporter_id: Option<i64>,
+    pub reason:      String,
+    pub details:     String,
+    pub status:      String,
+    pub created_at:  i64,
+    pub resolved_by: Option<i64>,
+    pub resolved_at: Option<i64>,
+    pub resolution:  Option<String>,
+}
+
+/// Registry-wide counts for the admin overview dashboard.
+pub struct AdminOverview {
+    pub stats:        DbStats,
+    pub admins:       i64,
+    pub open_reports: i64,
+}
+
 // ── Database handle ───────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -1495,6 +1518,106 @@ impl Db {
         let downloads_total: i64 = sqlx::query_scalar(&self.q_sql("SELECT COALESCE(SUM(downloads), 0) FROM versions"))
         .fetch_one(&self.pool).await?;
         Ok(DbStats { packages, versions, users, tokens_active, downloads_total })
+    }
+
+    /// True when a package with this name exists (case-insensitive).
+    pub async fn package_exists(&self, name: &str) -> Result<bool> {
+        let n: i64 = sqlx::query_scalar(
+            &self.q_sql("SELECT COUNT(*) FROM packages WHERE lower(name) = lower(?)"),
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n > 0)
+    }
+
+    /// File an abuse/problem report against a package (status starts `open`).
+    pub async fn create_report(
+        &self,
+        package: &str,
+        version: Option<&str>,
+        reporter_id: i64,
+        reason: &str,
+        details: &str,
+    ) -> Result<()> {
+        sqlx::query(&self.q_sql(
+            "INSERT INTO reports (package, version, reporter_id, reason, details, status, created_at)
+             VALUES (?, ?, ?, ?, ?, 'open', ?)",
+        ))
+        .bind(package)
+        .bind(version)
+        .bind(reporter_id)
+        .bind(reason)
+        .bind(details)
+        .bind(unix_now())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// List reports, newest first. When `status` is `Some`, filter by it.
+    pub async fn list_reports(&self, status: Option<&str>) -> Result<Vec<ReportRow>> {
+        const COLS: &str = "id, package, version, reporter_id, reason, details, status, \
+                            created_at, resolved_by, resolved_at, resolution";
+        let rows = match status {
+            Some(s) => {
+                sqlx::query_as(&self.q_sql(&format!(
+                    "SELECT {COLS} FROM reports WHERE status = ? ORDER BY created_at DESC"
+                )))
+                .bind(s)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as(&self.q_sql(&format!(
+                    "SELECT {COLS} FROM reports ORDER BY created_at DESC"
+                )))
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+        Ok(rows)
+    }
+
+    /// Resolve or dismiss a report. Returns `false` if no report has that id.
+    pub async fn resolve_report(
+        &self,
+        id: i64,
+        resolver_id: i64,
+        status: &str,
+        resolution: &str,
+    ) -> Result<bool> {
+        let n = sqlx::query(&self.q_sql(
+            "UPDATE reports SET status = ?, resolution = ?, resolved_by = ?, resolved_at = ? \
+             WHERE id = ?",
+        ))
+        .bind(status)
+        .bind(resolution)
+        .bind(resolver_id)
+        .bind(unix_now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(n > 0)
+    }
+
+    /// Registry-wide counts for the admin overview dashboard.
+    pub async fn admin_overview(&self) -> Result<AdminOverview> {
+        let stats = self.stats().await?;
+        let admins: i64 =
+            sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM users WHERE is_admin <> 0"))
+                .fetch_one(&self.pool)
+                .await?;
+        let open_reports: i64 =
+            sqlx::query_scalar(&self.q_sql("SELECT COUNT(*) FROM reports WHERE status = 'open'"))
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(AdminOverview {
+            stats,
+            admins,
+            open_reports,
+        })
     }
 
     // ── Organizations ──────────────────────────────────────────────────────────

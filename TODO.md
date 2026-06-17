@@ -15,6 +15,13 @@ The one substantial remaining feature is **P8** (server-side prebuilt builds, be
 - [x] **E4 · S** **Org-scoped tokens** — Optional `org_id` column on tokens (migration 0011); `POST /api/v1/me/tokens` accepts `"org"` field (owner-only); publish enforces that org-scoped tokens can only publish to packages owned by that org.
 - [x] **E5 · S** **Prebuilt blob GC** — `freight-registry gc` subcommand; dry-run by default, `--execute` to delete. Removes source tarballs, prebuilts, README, and docs for yanked versions. DB rows preserved.
 - [x] **T1 · B** **Integration test suite** — `tests/integration.rs`: 11 tests covering publish → download → yank/unyank flow, duplicate version rejection, non-owner publish rejection, pending-version download guard, TOTP enforcement, recovery code login + replay protection, org role gating (add_member, set_package_org), and org-scoped token enforcement (E4).
+- [x] **R1 · B** **Abuse/problem reports + admin triage** — `POST /api/v1/packages/:name/report`
+  lets any authenticated user flag a package (reasons: malware/security/license/spam/
+  name-squatting/other; optional version + details). Admins triage via
+  `GET /api/v1/admin/reports[?status=…]` and `PATCH /api/v1/admin/reports/:id`
+  (resolve/dismiss with a note). Migration 0012 (sqlite + pg); audit-logged; 3 integration tests.
+- [x] **R2 · S** **Admin overview** — `GET /api/v1/admin/overview` returns registry-wide counts
+  (packages, versions, users, admins, active tokens, total downloads, open reports).
 - [ ] **P8 · B** **Server-side prebuilt builds** — on source publish, queue Docker-based build jobs for each configured triple (`--build-triples x86_64-linux-gnu,aarch64-linux-gnu,x86_64-windows-gnu`); use **[Bollard](https://github.com/fussybeaver/bollard)** (Rust Docker API library) to drive the daemon directly — pull build image, create container with source bind-mount + output volume, stream logs, wait for exit; ClamAV scans output in a second container on the same volume before storing; results and live log streaming exposed via `GET /api/v1/packages/:name/:version/builds` and `GET /api/v1/packages/:name/:version/builds/:id/logs`; Linux/cross targets use `cross-rs` images; Windows targets use Windows Server Core Docker images; macOS cannot run in Docker legally so client-uploaded prebuilts remain the escape hatch for Apple targets
 
 ## Done

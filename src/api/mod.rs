@@ -5,7 +5,7 @@ use axum::{
     http::{header, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde_json::json;
@@ -37,6 +37,7 @@ pub mod publish;
 pub mod readme;
 pub mod refresh;
 pub mod register;
+pub mod reports;
 pub mod reset;
 pub mod search;
 pub mod stats;
@@ -154,6 +155,10 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/admin/users/:name/demote",         post(admin::demote_user))
         .route("/api/v1/admin/users/:name",                delete(admin::remove_user))
         .route("/api/v1/admin/packages/:name",             delete(delete::delete_package))
+        .route("/api/v1/admin/overview",                   get(admin::overview))
+        .route("/api/v1/admin/reports",                    get(reports::list_reports))
+        .route("/api/v1/admin/reports/:id",                patch(reports::resolve_report))
+        .route("/api/v1/packages/:name/report",            post(reports::file_report))
         .route("/api/v1/audit",                            get(audit::list_audit))
         // Auth
         .route("/api/v1/users/login",                      post(login::login))

@@ -225,6 +225,8 @@ enum UserCmd {
     Promote { username: String },
     /// Revoke admin privileges from a user
     Demote { username: String },
+    /// Set a user's role tier (user / moderator / admin)
+    Role { username: String, role: String },
 }
 
 #[derive(Subcommand)]
@@ -489,14 +491,14 @@ async fn main() -> Result<()> {
                 if users.is_empty() {
                     println!("no users");
                 } else {
-                    println!("{:<6}  {:<24}  {:<6}  email", "id", "username", "admin");
+                    println!("{:<6}  {:<24}  {:<10}  email", "id", "username", "role");
                     println!("{}", "-".repeat(65));
                     for u in users {
                         println!(
-                            "{:<6}  {:<24}  {:<6}  {}",
+                            "{:<6}  {:<24}  {:<10}  {}",
                             u.id,
                             u.username,
-                            if u.is_admin != 0 { "yes" } else { "no" },
+                            u.tier().as_str(),
                             u.email.as_deref().unwrap_or("-")
                         );
                     }
@@ -512,6 +514,18 @@ async fn main() -> Result<()> {
             UserCmd::Promote { username } => {
                 if db.set_admin(&username, true).await? {
                     println!("'{username}' is now an admin");
+                } else {
+                    anyhow::bail!("no user named '{username}'");
+                }
+            }
+            UserCmd::Role { username, role } => {
+                let tier = freight_registry::permissions::Tier::from_role(&role)
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "invalid role '{role}' — must be one of: {}",
+                        freight_registry::permissions::Tier::ALL.map(|t| t.as_str()).join(", ")
+                    ))?;
+                if db.set_role(&username, tier.as_str()).await? {
+                    println!("'{username}' is now {}", tier.as_str());
                 } else {
                     anyhow::bail!("no user named '{username}'");
                 }

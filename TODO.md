@@ -4,7 +4,12 @@ Size labels: **S** = small (hours), **B** = big (days / multiple files).
 
 ## Open
 
-- [ ] **A6 · S** **CSP header** — Content-Security-Policy once any HTML pages are served directly
+The one substantial remaining feature is **P8** (server-side prebuilt builds, below).
+
+- [x] **A6 · S** **CSP header** — done: the `security_headers` middleware sets a full
+  `content-security-policy` (`default-src 'self'`, `frame-ancestors 'none'`, …) plus
+  `x-content-type-options`, `x-frame-options`, and `referrer-policy` on every response.
+  Future hardening: drop `'unsafe-inline'` for scripts via nonces once inline page JS is externalised.
 - [x] **E2 · S** **TOTP recovery codes** — Generated on TOTP confirm (8 codes, SHA-256 hashes stored); returned once in the confirm response; consumed atomically on login as an alternative to a live TOTP code.
 - [x] **E3 · S** **Org role enforcement** — `delete_org`, `add_member`, `remove_member` already required owner; fixed `set_package_org` to require org owner instead of just org member.
 - [x] **E4 · S** **Org-scoped tokens** — Optional `org_id` column on tokens (migration 0011); `POST /api/v1/me/tokens` accepts `"org"` field (owner-only); publish enforces that org-scoped tokens can only publish to packages owned by that org.

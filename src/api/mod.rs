@@ -153,6 +153,7 @@ pub fn router(state: Arc<AppState>, max_upload_bytes: usize) -> Router {
         .route("/api/v1/admin/users",                      get(admin::list_users))
         .route("/api/v1/admin/users/:name/promote",        post(admin::promote_user))
         .route("/api/v1/admin/users/:name/demote",         post(admin::demote_user))
+        .route("/api/v1/admin/users/:name/role",           post(admin::set_role))
         .route("/api/v1/admin/users/:name",                delete(admin::remove_user))
         .route("/api/v1/admin/packages/:name",             delete(delete::delete_package))
         .route("/api/v1/admin/overview",                   get(admin::overview))
@@ -238,6 +239,7 @@ async fn me(auth: crate::auth::AuthToken) -> Json<serde_json::Value> {
         "email":            auth.user.email,
         "email_verified":   auth.user.email_verified != 0,
         "is_admin":         auth.user.is_admin != 0,
+        "role":             auth.user.tier().as_str(),
         "totp_enabled":     auth.user.totp_enabled != 0,
         "token_expires_at": expires_at,
         "token_expires_in": expires_in,

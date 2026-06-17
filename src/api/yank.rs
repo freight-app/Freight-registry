@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 
-use crate::{auth::PublishToken, db::DEFAULT_CHANNEL, AppState};
+use crate::{auth::PublishToken, db::DEFAULT_CHANNEL, permissions::Permission, AppState};
 use super::{ApiError, ApiResult};
 
 #[derive(Deserialize)]
@@ -25,7 +25,10 @@ pub async fn yank(
     Query(params): Query<ChannelParam>,
 ) -> ApiResult<Json<Value>> {
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
-    require_owner(&state, auth.user.id, &name, channel).await?;
+    // Moderators/admins may yank any package; everyone else must own it.
+    if !auth.user.can(Permission::YankAnyPackage) {
+        require_owner(&state, auth.user.id, &name, channel).await?;
+    }
     let updated = state.db.set_yanked(&name, &version, channel, true).await?;
     if !updated {
         return Err(ApiError::not_found(format!("`{name}@{version}` not found in channel `{channel}`")));
@@ -44,7 +47,10 @@ pub async fn unyank(
     Query(params): Query<ChannelParam>,
 ) -> ApiResult<Json<Value>> {
     let channel = params.channel.as_deref().unwrap_or(DEFAULT_CHANNEL);
-    require_owner(&state, auth.user.id, &name, channel).await?;
+    // Moderators/admins may yank any package; everyone else must own it.
+    if !auth.user.can(Permission::YankAnyPackage) {
+        require_owner(&state, auth.user.id, &name, channel).await?;
+    }
     let updated = state.db.set_yanked(&name, &version, channel, false).await?;
     if !updated {
         return Err(ApiError::not_found(format!("`{name}@{version}` not found in channel `{channel}`")));

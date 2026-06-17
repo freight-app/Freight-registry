@@ -21,7 +21,14 @@ The one substantial remaining feature is **P8** (server-side prebuilt builds, be
   `GET /api/v1/admin/reports[?status=…]` and `PATCH /api/v1/admin/reports/:id`
   (resolve/dismiss with a note). Migration 0012 (sqlite + pg); audit-logged; 3 integration tests.
 - [x] **R2 · S** **Admin overview** — `GET /api/v1/admin/overview` returns registry-wide counts
-  (packages, versions, users, admins, active tokens, total downloads, open reports).
+  (packages, versions, users, admins, active tokens, total downloads, open reports). Moderator+.
+- [x] **R3 · B** **Role tiers + permission model** — `is_admin` replaced by a `role` tier
+  (`user`/`moderator`/`admin`, migration 0013, is_admin kept in sync). Authorization is checked
+  against granular `Permission`s; the tier→permission policy lives in one place
+  (`permissions::Tier::allows`) so a fork can re-map without touching call sites — the server
+  itself only ever stores a tier per user. Moderators can triage reports + view the overview +
+  yank any package; admins additionally manage users/roles and hard-delete. `POST
+  /api/v1/admin/users/:name/role` sets a tier; `role` exposed in `/me` and `/admin/users`.
 - [ ] **P8 · B** **Server-side prebuilt builds** — on source publish, queue Docker-based build jobs for each configured triple (`--build-triples x86_64-linux-gnu,aarch64-linux-gnu,x86_64-windows-gnu`); use **[Bollard](https://github.com/fussybeaver/bollard)** (Rust Docker API library) to drive the daemon directly — pull build image, create container with source bind-mount + output volume, stream logs, wait for exit; ClamAV scans output in a second container on the same volume before storing; results and live log streaming exposed via `GET /api/v1/packages/:name/:version/builds` and `GET /api/v1/packages/:name/:version/builds/:id/logs`; Linux/cross targets use `cross-rs` images; Windows targets use Windows Server Core Docker images; macOS cannot run in Docker legally so client-uploaded prebuilts remain the escape hatch for Apple targets
 
 ## Done

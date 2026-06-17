@@ -59,6 +59,30 @@ pub struct UserRow {
     pub email_verified: i64,
     pub totp_secret:    Option<String>,
     pub totp_enabled:   i64,
+    /// Role tier (`user`/`moderator`/`admin`). `#[sqlx(default)]` so SELECTs that
+    /// don't fetch it still build a `UserRow`; [`UserRow::tier`] then falls back
+    /// to `is_admin`. Queries that gate on the tier (auth, admin listing) DO
+    /// select it.
+    #[sqlx(default)]
+    pub role: String,
+}
+
+impl UserRow {
+    /// The user's authorization tier. Falls back to `is_admin` when `role` was
+    /// not selected (empty) or holds an unknown value — so admin checks work
+    /// even on queries that don't fetch the column.
+    pub fn tier(&self) -> crate::permissions::Tier {
+        crate::permissions::Tier::from_role(&self.role).unwrap_or(if self.is_admin != 0 {
+            crate::permissions::Tier::Admin
+        } else {
+            crate::permissions::Tier::User
+        })
+    }
+
+    /// Whether the user is granted `perm` (via their tier's policy).
+    pub fn can(&self, perm: crate::permissions::Permission) -> bool {
+        self.tier().allows(perm)
+    }
 }
 
 #[derive(FromRow, Clone)]
@@ -351,7 +375,7 @@ impl Db {
 
     pub async fn list_users(&self) -> Result<Vec<UserRow>> {
         let rows = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
-                    email_verified, totp_secret, totp_enabled
+                    email_verified, totp_secret, totp_enabled, role
              FROM users ORDER BY username"))
         .fetch_all(&self.pool)
         .await?;
@@ -480,8 +504,18 @@ impl Db {
     }
 
     pub async fn set_admin(&self, username: &str, is_admin: bool) -> Result<bool> {
-        let n = sqlx::query(&self.q_sql("UPDATE users SET is_admin = ? WHERE lower(username) = lower(?)"))
-        .bind(is_admin as i64)
+        // Keep the role tier in sync with the legacy boolean: admin ⇄ user.
+        self.set_role(username, if is_admin { "admin" } else { "user" }).await
+    }
+
+    /// Set a user's role tier (`user`/`moderator`/`admin`), keeping the legacy
+    /// `is_admin` boolean in sync. Returns `false` if the user doesn't exist.
+    pub async fn set_role(&self, username: &str, role: &str) -> Result<bool> {
+        let n = sqlx::query(&self.q_sql(
+            "UPDATE users SET role = ?, is_admin = ? WHERE lower(username) = lower(?)",
+        ))
+        .bind(role)
+        .bind((role == "admin") as i64)
         .bind(username)
         .execute(&self.pool)
         .await?
@@ -700,7 +734,7 @@ impl Db {
         });
 
         let user: UserRow = sqlx::query_as(&self.q_sql("SELECT id, username, email, password_hash, is_admin,
-                    email_verified, totp_secret, totp_enabled
+                    email_verified, totp_secret, totp_enabled, role
              FROM users WHERE id = ?"))
         .bind(tok.user_id)
         .fetch_one(&self.pool)

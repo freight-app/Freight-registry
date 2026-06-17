@@ -630,3 +630,89 @@ async fn admin_overview_counts() {
     ).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
 }
+
+// ── Role tiers (user / moderator / admin) ─────────────────────────────────────
+
+async fn register_moderator(state: &Arc<AppState>, username: &str) -> String {
+    let token = register(state, username, "pw-mod-12345").await;
+    state.db.set_role(username, "moderator").await.unwrap();
+    token
+}
+
+#[tokio::test]
+async fn moderator_tier_can_moderate_not_administer() {
+    let state = make_state().await;
+    let owner = register(&state, "mt_owner", "pw-123456").await;
+    let moder = register_moderator(&state, "mt_mod").await;
+    assert_eq!(publish(&state, &owner, "modpkg", "1.0.0").await, StatusCode::OK);
+    // Owner files a report.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/packages/modpkg/report", &owner, json!({ "reason": "spam" })),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Moderator: can view the overview…
+    let (st, body) = send(api::router(state.clone(), 1 << 20), get_auth("/api/v1/admin/overview", &moder)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["open_reports"], 1);
+
+    // …list reports…
+    let (st, body) = send(api::router(state.clone(), 1 << 20), get_auth("/api/v1/admin/reports?status=open", &moder)).await;
+    assert_eq!(st, StatusCode::OK);
+    let id = body["reports"][0]["id"].as_i64().unwrap();
+
+    // …yank a package they don't own…
+    let (st, _) = send(api::router(state.clone(), 1 << 20), delete_auth("/api/v1/packages/modpkg/1.0.0/yank", &moder)).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // …and resolve the report.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        patch_json_auth(&format!("/api/v1/admin/reports/{id}"), &moder, json!({ "status": "resolved" })),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // But a moderator CANNOT manage users…
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/admin/users/mt_owner/role", &moder, json!({ "role": "moderator" })),
+    ).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // …nor hard-delete packages.
+    let (st, _) = send(api::router(state.clone(), 1 << 20), delete_auth("/api/v1/admin/packages/modpkg", &moder)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+
+    // A plain user can't even view the report queue.
+    let (st, _) = send(api::router(state.clone(), 1 << 20), get_auth("/api/v1/admin/reports", &owner)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn admin_can_set_role_tier() {
+    let state = make_state().await;
+    let _target = register(&state, "sr_target", "pw-123456").await;
+    let admin = register_admin(&state, "sr_admin").await;
+
+    // Promote to moderator via the role endpoint.
+    let (st, body) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/admin/users/sr_target/role", &admin, json!({ "role": "moderator" })),
+    ).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["role"], "moderator");
+
+    // Invalid role is rejected.
+    let (st, _) = send(
+        api::router(state.clone(), 1 << 20),
+        post_json_auth("/api/v1/admin/users/sr_target/role", &admin, json!({ "role": "wizard" })),
+    ).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // The change is reflected in the admin user listing.
+    let (_, body) = send(api::router(state.clone(), 1 << 20), get_auth("/api/v1/admin/users", &admin)).await;
+    let target = body["users"].as_array().unwrap().iter()
+        .find(|u| u["username"] == "sr_target").unwrap();
+    assert_eq!(target["role"], "moderator");
+}

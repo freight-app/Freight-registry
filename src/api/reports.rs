@@ -14,7 +14,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    auth::{AdminToken, AuthToken},
+    auth::{scope_allows_publish, AuthToken},
+    permissions::Permission,
     AppState,
 };
 
@@ -82,11 +83,15 @@ pub struct StatusFilter {
 }
 
 /// List reports for triage. `?status=open` filters; omit for all.
+/// Requires the `ViewReports` permission (moderator or admin).
 pub async fn list_reports(
-    _auth: AdminToken,
+    auth: AuthToken,
     State(state): State<Arc<AppState>>,
     Query(filter): Query<StatusFilter>,
 ) -> ApiResult<Json<Value>> {
+    if !auth.user.can(Permission::ViewReports) {
+        return Err(ApiError::forbidden("requires moderator or admin"));
+    }
     let reports = state.db.list_reports(filter.status.as_deref()).await?;
     let list: Vec<Value> = reports
         .iter()
@@ -119,12 +124,20 @@ pub struct ResolveReq {
 }
 
 /// Resolve or dismiss a report.
+/// Requires the `ResolveReports` permission (moderator or admin) and a
+/// non-read-only token.
 pub async fn resolve_report(
-    auth: AdminToken,
+    auth: AuthToken,
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
     Json(req): Json<ResolveReq>,
 ) -> ApiResult<Json<Value>> {
+    if !auth.user.can(Permission::ResolveReports) {
+        return Err(ApiError::forbidden("requires moderator or admin"));
+    }
+    if !scope_allows_publish(&auth.token.scope) {
+        return Err(ApiError::forbidden("this token has read-only scope"));
+    }
     if !VALID_RESOLUTIONS.contains(&req.status.as_str()) {
         return Err(ApiError::bad_request(format!(
             "invalid status `{}` — must be one of: {}",

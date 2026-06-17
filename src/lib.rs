@@ -5,6 +5,7 @@ pub mod db;
 pub mod mail;
 pub mod metrics;
 pub mod oauth;
+pub mod permissions;
 pub mod rate_limit;
 pub mod storage;
 pub mod totp;
